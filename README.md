@@ -29,6 +29,26 @@ Visit the [Lichii game compatibility website](https://lichii.zortos.me) to find 
 
 ## Downloads and setup
 
+### Odin 3 / ArmadaOS ARM64 (one-paste install)
+
+For **ARM64 ArmadaOS**, open Konsole and paste:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MycroftGrok/Lichii_Odin/odin-armadaos/scripts/install-release.sh | bash
+```
+
+This installs the newest **experimental** ARM64 package when a GitHub build is available and automatically adds a **desktop shortcut** and a **KDE Games menu** entry. It will **not replace an existing working Lichii binary**. No root access or source compilation is needed for these packaged downloads.
+
+Already running this fork on the Odin? To add both shortcuts **without rebuilding or switching your stable version**:
+
+```bash
+cd "$HOME/Applications/Lichii/source" && git pull odin-fork odin-armadaos && bash scripts/install-launcher.sh
+```
+
+See the [Odin ARM64/ArmadaOS guide](README-ODIN-ARMADAOS.md) for NCE, Vulkan, InputPlumber, releases and safe updates. Odin 2 has not been validated.
+
+
+
 Download Lichii only from this repository's [releases page](https://github.com/zortos293/Lichii/releases). Lichii has no other download site: archives offered elsewhere, such as lichii.org, are not built by this project, and one has been reported to install malware ([#545](https://github.com/zortos293/Lichii/issues/545)).
 
 On Windows, extract the entire build archive and run **lichii.exe**. Only use games and system files you have legally obtained. Games, keys and firmware are not included.
