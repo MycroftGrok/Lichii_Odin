@@ -1,7 +1,7 @@
 # Lichii — Odin 3 / Odin 2 ARM64 on ArmadaOS
 
 > **Status: Odin 3 Ultra field-tested; Odin 2 experimental / not yet verified.**
-> This is an install-and-maintenance *supplement* to upstream [Lichii](https://github.com/zortos293/Lichii), not a standalone emulator. The working source changes reside in the **local Git checkout** on the original Odin 3 Ultra until they have been committed and pushed. The scripts in this package DO NOT recreate the ARM64 patches from scratch.
+> This is an install-and-maintenance *supplement* to upstream [Lichii](https://github.com/zortos293/Lichii), not a standalone emulator. The verified ARM64 modifications are published in the **`odin-armadaos` branch** of this fork. Clone that branch, not upstream `nx2`, to obtain the patches.
 
 ## What this fork addresses
 
@@ -25,46 +25,15 @@ Runtime configuration matters just as much as source changes:
 
 **Odin 2 warning:** Original Odin 2 / Odin 2 Portal / Odin 2 Mini differ. A different Adreno GPU, firmware/kernel, driver support and memory configuration can change both compatibility and FPS. The Turnip ICD path may work when Freedreno is supplied, but confirm first with `vulkaninfo --summary` on the intended device. Never claim 60 FPS there without testing.
 
-## A. Publish the locally verified source to GitHub (FIRST, on the original Odin 3 Ultra)
+## A. Published fork and known-good milestone
 
-Do not start with a new upstream clone: the working changes currently live in the **existing local source**.
+The Odin modifications are publicly available in **[MycroftGrok/Lichii_Odin, branch `odin-armadaos`](https://github.com/MycroftGrok/Lichii_Odin/tree/odin-armadaos)**. The first verified snapshot was committed as [`64df748`](https://github.com/MycroftGrok/Lichii_Odin/commit/64df748b91d4ddbf2cfcbdd24563f5935ad82762). The *source changes* are published; a validated downloadable release binary is **not** provided yet.
 
-1. Download and extract `odin-lichii-kit.zip` to `~/Downloads/` on the Odin.
-2. Copy this README and the bundled scripts into the current Lichii repository:
+The original working Odin 3 Ultra retains `~/Applications/Lichii/build-nce-fix/bin/lichii`, the `lichii-nce-first-success-20261110` binary backup, and the `nce-first-success-20261110.patch` source snapshot. These local fallback artifacts are not included in Git. Keep them intact until a replacement build has passed game and controller testing.
 
-```bash
-cd "$HOME/Applications/Lichii/source"
-mkdir -p scripts
-cp "$HOME/Downloads/odin-lichii-kit/README-ODIN-ARMADAOS.md" .
-cp "$HOME/Downloads/odin-lichii-kit/OS-ALTERNATIVES-2026-11-10.md" .
-cp "$HOME/Downloads/odin-lichii-kit/scripts/"*.sh scripts/
-chmod +x scripts/*.sh
-bash scripts/prepare-working-tree.sh
-bash scripts/install-launcher.sh
-```
+The source history tracks [upstream Lichii](https://github.com/zortos293/Lichii) and can merge future `nx2` updates through a separate candidate branch (section C). **Do not** replace the source tree with a fresh clone on the already-configured Odin.
 
-The script also points the first stable launcher at the already-tested `build-nce-fix/bin/lichii` without rebuilding. It creates branch `odin-armadaos`, preserves a *second* diff snapshot under `~/Applications/Lichii/git-snapshots/`, stages tracked changes, and makes one milestone commit. It does not delete any source/build directories, change the installed AppImage, force checkout, or push without review. **Review the commit**:
-
-```bash
-git -C "$HOME/Applications/Lichii/source" --no-pager show --stat --oneline HEAD
-git -C "$HOME/Applications/Lichii/source" status --short
-git -C "$HOME/Applications/Lichii/source" remote -v
-```
-
-3. In GitHub's web interface, use **Fork** at <https://github.com/zortos293/Lichii> and create a fork under your account (for example `MycroftGrok/Lichii`). Do not initialize an unrelated empty repo: forking preserves ancestry and makes upstream comparison easier.
-4. In Konsole, set the fork remote **using your actual account name**:
-
-```bash
-cd "$HOME/Applications/Lichii/source"
-git remote add odin-fork https://github.com/YOUR_GITHUB_USERNAME/Lichii.git
-git push -u odin-fork odin-armadaos
-```
-
-Use your actual GitHub username in the URL. If HTTPS asks for credentials, use a GitHub-supported authentication method (GitHub CLI login or a scoped token); never paste a password/token into chat. If the remote already exists, use `git remote -v` rather than adding it twice.
-
-**Published state:** after the push succeeds, the branch URL will be `https://github.com/YOUR_GITHUB_USERNAME/Lichii/tree/odin-armadaos`. Until then, the fork is **not** published. Diagnostic `NCE_DIAG` logging may still be present in this first preserved milestone; do not remove it before separately testing a clean build.
-
-## B. Exact steps for a fresh ARM64 ArmadaOS device (after branch exists)
+## B. Exact steps for a fresh ARM64 ArmadaOS device
 
 These instructions assume **ArmadaOS is already installed and boots successfully**. Do not flash firmware or change the bootloader to install Lichii.
 
@@ -79,12 +48,12 @@ ls -l /dev/dri/renderD*
 
 `uname -m` must show `aarch64`. You want `Adreno ...` and `turnip Mesa driver`, *not only* llvmpipe. If `vulkaninfo` is absent, obtain Vulkan tools using the OS's recommended package workflow; do not overwrite the host graphics stack.
 
-2. Ensure `toolbox`, `git`, and `unzip` are installed by ArmadaOS. Clone the **published fork branch**:
+2. Ensure `toolbox`, `git`, and `unzip` are installed by ArmadaOS. Clone the **published fork branch** (the repository's default branch may still be `nx2`, so the explicit `--branch` is required):
 
 ```bash
 mkdir -p "$HOME/Applications/Lichii"
 git clone --recurse-submodules --branch odin-armadaos \
-  https://github.com/YOUR_GITHUB_USERNAME/Lichii.git \
+  https://github.com/MycroftGrok/Lichii_Odin.git \
   "$HOME/Applications/Lichii/source"
 cd "$HOME/Applications/Lichii/source"
 git remote add upstream https://github.com/zortos293/Lichii.git
