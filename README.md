@@ -6,6 +6,10 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 -->
 
+> [!IMPORTANT]
+> **Odin 3 / Odin 2 ArmadaOS users:** This fork adds ARM64 NCE, NSO loader, and build compatibility modifications. For the installation procedure, required Turnip/Wayland settings, gamepad setup, and safe upstream updates, see **[Odin ARM64 / ArmadaOS installation guide](README-ODIN-ARMADAOS.md)** on the `odin-armadaos` branch.
+> **Tested:** Odin 3 Ultra running ArmadaOS; 60 FPS observed in one game. **Odin 2 remains untested.** This fork is independent of upstream Lichii; the original project is at [zortos293/Lichii](https://github.com/zortos293/Lichii).
+
 <h2 align="center">⚠️ Lichii has no official website ⚠️</h2>
 
 > [!CAUTION]
