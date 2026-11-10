@@ -46,6 +46,7 @@ Patcher::Patcher() : c(m_patch_instructions), c_pre(m_patch_instructions_pre) {
 }
 
 Patcher::Patcher(std::span<const u8> text) : c(m_patch_instructions), c_pre(m_patch_instructions_pre) {
+    LOG_WARNING(Core_ARM, "NCE_DIAG runtime NRO scan: {} bytes", text.size());
     modules.emplace_back();
     curr_patch = &modules.back();
     const auto words = std::span<const u32>{reinterpret_cast<const u32*>(text.data()), text.size() / sizeof(u32)};
@@ -55,6 +56,12 @@ Patcher::Patcher(std::span<const u8> text) : c(m_patch_instructions), c_pre(m_pa
             BranchToPatch(offset);
             const auto src_reg = mrs.GetSystemReg() == TpidrroEl0 ? oaknut::SystemReg::TPIDRRO_EL0 : oaknut::SystemReg::TPIDR_EL0;
             WriteMrsHandler(offset + sizeof(u32), oaknut::XReg{static_cast<int>(mrs.GetRt())}, src_reg);
+        } else if (auto timer_mrs = MRS{words[i]}; timer_mrs.Verify() && timer_mrs.GetSystemReg() == CntpctEl0) {
+            BranchToPatch(offset);
+            WriteCntpctHandler(offset + sizeof(u32), oaknut::XReg{static_cast<int>(timer_mrs.GetRt())}, c);
+        } else if (auto frequency_mrs = MRS{words[i]}; frequency_mrs.Verify() && frequency_mrs.GetSystemReg() == CntfrqEl0) {
+            BranchToPatch(offset);
+            WriteCntfrqHandler(offset + sizeof(u32), oaknut::XReg{static_cast<int>(frequency_mrs.GetRt())}, c);
         } else if (auto msr = MSR{words[i]}; msr.Verify() && msr.GetSystemReg() == TpidrEl0) {
             BranchToPatch(offset);
             WriteMsrHandler(offset + sizeof(u32), oaknut::XReg{static_cast<int>(msr.GetRt())});
@@ -65,6 +72,7 @@ Patcher::Patcher(std::span<const u8> text) : c(m_patch_instructions), c_pre(m_pa
 Patcher::~Patcher() = default;
 
 bool Patcher::PatchText(std::span<const u8> program_image, const Kernel::CodeSet::Segment& code) {
+    LOG_WARNING(Core_ARM, "NCE_DIAG NSO scan: code offset {:#x}, size {:#x}", code.offset, code.size);
     // If we have patched modules but cannot reach the new module, then it needs its own patcher.
     const size_t image_size = program_image.size();
 
@@ -97,6 +105,23 @@ bool Patcher::PatchText(std::span<const u8> program_image, const Kernel::CodeSet
     const auto text = std::span{program_image}.subspan(code.offset, code.size);
     const auto text_words =
         std::span<const u32>{reinterpret_cast<const u32*>(text.data()), text.size() / sizeof(u32)};
+
+    size_t diag_pct = 0;
+    size_t diag_freq = 0;
+    for (size_t j = ModuleCodeIndex; j < text_words.size(); ++j) {
+        MRS diag_mrs{text_words[j]};
+        if (diag_mrs.Verify()) {
+            if (diag_mrs.GetSystemReg() == CntpctEl0) ++diag_pct;
+            if (diag_mrs.GetSystemReg() == CntfrqEl0) ++diag_freq;
+        }
+    }
+    LOG_WARNING(Core_ARM, "NCE_DIAG NSO timers: CNTPCT={} CNTFRQ={} size={:#x}",
+                diag_pct, diag_freq, code.size);
+
+    if (code.size == 0x3c47000 && text_words.size() > 0x3c4620c / sizeof(u32)) {
+        LOG_WARNING(Core_ARM, "NCE_DIAG MAIN original at offset 0x3c4620c: {:#010x}",
+                    text_words[0x3c4620c / sizeof(u32)]);
+    }
 
     // Loop through instructions, patching as needed.
     for (u32 i = ModuleCodeIndex; i < static_cast<u32>(text_words.size()); i++) {
@@ -294,6 +319,11 @@ bool Patcher::RelocateAndCopy(Common::ProcessAddress load_base, const Kernel::Co
 
     // We are now ready to relocate!
     auto& patch = modules[m_relocate_module_index++];
+    LOG_WARNING(Core_ARM, "NCE_DIAG NSO relocation: base={:#x} mode={} branches={} pre_branches={}",
+                GetInteger(load_base), static_cast<u32>(mode),
+                patch.m_branch_to_patch_relocations.size(),
+                patch.m_branch_to_pre_patch_relocations.size());
+
 
     if (mode == PatchMode::Split) {
         for (const Relocation& rel : patch.m_branch_to_pre_patch_relocations) {

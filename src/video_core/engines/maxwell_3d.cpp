@@ -1777,7 +1777,7 @@ bool Maxwell3D::FrontRunOnBack(Core::System& system, VideoCommon::GpuSplit& spli
             // As ProcessMacro calls a macro, with the back's engine.
             namespace AsyncReadback = VideoCore::AsyncReadback;
             const bool profiled = VideoCommon::Nx2Profile::Enabled();
-            const u64 start = profiled ? AsyncReadback::Now() : 0;
+            const u64 profile_start = profiled ? AsyncReadback::Now() : 0;
             ConsumeSink(*system_ptr);
             engine_ptr->split_writes = &macro->write_set;
             const u64 unexpected = engine_ptr->split_unexpected_writes;
@@ -1787,7 +1787,7 @@ bool Maxwell3D::FrontRunOnBack(Core::System& system, VideoCommon::GpuSplit& spli
                 escapes->fetch_add(1, std::memory_order_release);
             }
             if (profiled) {
-                AsyncReadback::CountBackMacro(AsyncReadback::Now() - start);
+                AsyncReadback::CountBackMacro(AsyncReadback::Now() - profile_start);
                 AsyncReadback::MaybeReport();
             }
         },

@@ -179,6 +179,20 @@ std::optional<VAddr> AppLoader_NSO::LoadModule(Kernel::KProcess& process, Core::
 
     // Apply patches if necessary
     const auto name = nso_file.GetName();
+#ifdef HAS_NCE
+    if (name == "main") {
+        constexpr size_t diag_offset = 0x3c4620c;
+        const auto& diag_segment = codeset.CodeSegment();
+        if (diag_segment.size >= diag_offset + sizeof(u32) &&
+            codeset.memory.size() >= diag_segment.offset + diag_offset + sizeof(u32)) {
+            u32 diag_word{};
+            std::memcpy(&diag_word, codeset.memory.data() + diag_segment.offset + diag_offset, sizeof(diag_word));
+            LOG_WARNING(Loader, "NCE_DIAG MAIN source stage=decompressed loading={} word={:#010x} file_size={:#x} compressed={} patch_manager={}",
+                        load_into_process, diag_word, nso_file.GetSize(),
+                        nso_header.IsSegmentCompressed(0), pm.has_value());
+        }
+    }
+#endif
     if (pm && (pm->HasNSOPatch(nso_header.build_id, name) || Settings::values.dump_nso)) {
         std::span<u8> patchable_section(codeset.memory.data() + module_start, codeset.memory.size() - module_start);
         std::vector<u8> pi_header(sizeof(NSOHeader) + patchable_section.size());
@@ -256,6 +270,20 @@ std::optional<VAddr> AppLoader_NSO::LoadModule(Kernel::KProcess& process, Core::
         }
     }
 
+#ifdef HAS_NCE
+    if (name == "main") {
+        constexpr size_t diag_offset = 0x3c4620c;
+        const auto& diag_segment = codeset.CodeSegment();
+        if (diag_segment.size >= diag_offset + sizeof(u32) &&
+            codeset.memory.size() >= diag_segment.offset + diag_offset + sizeof(u32)) {
+            u32 diag_word{};
+            std::memcpy(&diag_word, codeset.memory.data() + diag_segment.offset + diag_offset, sizeof(diag_word));
+            LOG_WARNING(Loader, "NCE_DIAG MAIN source stage=pre_nce loading={} word={:#010x} file_size={:#x} compressed={} patch_manager={}",
+                        load_into_process, diag_word, nso_file.GetSize(),
+                        nso_header.IsSegmentCompressed(0), pm.has_value());
+        }
+    }
+#endif
 #ifdef HAS_NCE
     // If we are computing the process code layout and using nce backend, patch.
     const auto& code = codeset.CodeSegment();
@@ -340,7 +368,29 @@ std::optional<VAddr> AppLoader_NSO::LoadModule(Kernel::KProcess& process, Core::
         }
     }
     LOG_INFO(Loader, "Module {} loaded at {:#x} (size {:#x})", nso_file.GetName(), load_base, image_size);
+#ifdef HAS_NCE
+    if (name == "main" && Settings::IsNceEnabled()) {
+        constexpr u64 probe_offset = 0x3c4620c;
+        const auto& segment = codeset.CodeSegment();
+        if (segment.size >= probe_offset + sizeof(u32) &&
+            codeset.memory.size() >= segment.offset + probe_offset + sizeof(u32)) {
+            u32 instruction{};
+            std::memcpy(&instruction,
+                        codeset.memory.data() + segment.offset + probe_offset,
+                        sizeof(instruction));
+            LOG_WARNING(Loader, "NCE_DIAG MAIN before LoadModule: {:#010x}",
+                        instruction);
+        }
+    }
+#endif
     process.LoadModule(system.Kernel(), std::move(codeset), load_base);
+#ifdef HAS_NCE
+    if (name == "main" && Settings::IsNceEnabled()) {
+        LOG_WARNING(Loader, "NCE_DIAG MAIN after LoadModule: {:#010x}",
+                    process.GetMemory().Read32(load_base + 0x3c4620c));
+    }
+#endif
+
     if (name == "main" && process.GetProgramId() == Settings::MarioKartWorldProgramId) {
         process.SetMkwDynamicFpsPatchApplied(mkw_dynamic_fps_patch_applied);
     }

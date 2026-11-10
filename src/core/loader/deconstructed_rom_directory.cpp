@@ -456,6 +456,8 @@ AppLoader_DeconstructedRomDirectory::LoadResult AppLoader_DeconstructedRomDirect
     std::size_t code_size{};
 
     // Define an nce patch context for each potential module.
+    const FileSys::PatchManager pm{metadata.GetTitleID(), system.GetFileSystemController(),
+                                   system.GetContentProvider()};
     PatchCollection patch_ctx{is_application};
 
     // Use the NSO module loader to figure out the code layout
@@ -468,7 +470,7 @@ AppLoader_DeconstructedRomDirectory::LoadResult AppLoader_DeconstructedRomDirect
 
         const bool should_pass_arguments = std::strcmp(module, "rtld") == 0;
         const auto tentative_next_load_addr = AppLoader_NSO::LoadModule(
-            process, system, *module_file, code_size, should_pass_arguments, false, {},
+            process, system, *module_file, code_size, should_pass_arguments, false, pm,
             patch_ctx.GetPatchers(), patch_ctx.GetLastIndex());
         if (!tentative_next_load_addr) {
             return {ResultStatus::ErrorLoadingNSO, {}};
@@ -504,8 +506,6 @@ AppLoader_DeconstructedRomDirectory::LoadResult AppLoader_DeconstructedRomDirect
     modules.clear();
     const VAddr base_address{GetInteger(process.GetEntryPoint())};
     VAddr next_load_addr{base_address};
-    const FileSys::PatchManager pm{metadata.GetTitleID(), system.GetFileSystemController(),
-                                   system.GetContentProvider()};
     for (size_t i = 0; i < static_modules.size(); i++) {
         const auto& module = static_modules[i];
         const FileSys::VirtualFile module_file{dir->GetFile(module)};
