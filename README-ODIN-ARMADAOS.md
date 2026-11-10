@@ -3,6 +3,41 @@
 > **Status: Odin 3 Ultra field-tested; Odin 2 experimental / not yet verified.**
 > This is an install-and-maintenance *supplement* to upstream [Lichii](https://github.com/zortos293/Lichii), not a standalone emulator. The verified ARM64 modifications are published in the **`odin-armadaos` branch** of this fork. Clone that branch, not upstream `nx2`, to obtain the patches.
 
+
+## One-paste installation (recommended for new ArmadaOS ARM64 devices)
+
+Open **Konsole** on your Odin and paste this entire line:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MycroftGrok/Lichii_Odin/odin-armadaos/scripts/install-release.sh | bash
+```
+
+The installer downloads the newest **experimental ARM64 release from this GitHub fork**, verifies its SHA-256 checksum, and creates:
+
+- **Desktop:** a clickable **Lichii (Odin ARM64)** shortcut.
+- **KDE Application Launcher → Games:** **Lichii (Odin ARM64)**.
+- **Files:** an independent versioned installation under `~/Applications/Lichii/releases/`.
+
+It automatically uses native Wayland and the Freedreno/Turnip Vulkan ICD when available. No `sudo`, build toolchain or source compilation is required for the downloadable release. ARM64 Linux libraries are packaged with the build, but the host still needs a working Vulkan driver, audio stack, and standard system libraries.
+
+**Existing working Lichii installation?** The same installer **does not replace or switch** the active binary or its launcher. It downloads the release into a separate directory for testing and refreshes the shortcuts. This protects the already-verified 60 FPS Odin build. No source directories, game files, saves or backups are deleted. Automated releases are *pre-releases* until tested on an Odin.
+
+If GitHub reports **no packaged Odin ARM64 release yet**, open the [fork's Actions page](https://github.com/MycroftGrok/Lichii_Odin/actions/workflows/odin-armadaos-aarch64.yml) to see whether the first ARM64 build has completed. There is no downloadable binary until the workflow succeeds.
+
+### Add desktop and Games menu shortcuts to an existing source installation
+
+If you already have the verified working emulator on your Odin, you only need to install the shortcuts—not download or rebuild anything:
+
+```bash
+cd "$HOME/Applications/Lichii/source" && git pull odin-fork odin-armadaos && bash scripts/install-launcher.sh
+```
+
+This preserves the active executable and installs shortcuts for the existing Wayland/toolbox launcher. The **Games** entry comes from `Categories=Game;Emulator;`, while the desktop shortcut is copied to the KDE-configured Desktop folder. If Git reports uncommitted changes, do not reset your checkout just to add shortcuts; use the existing `scripts/install-launcher.sh` after reviewing your changes.
+
+### GitHub ARM64 releases
+
+The isolated [Odin ARM64 GitHub Actions workflow](https://github.com/MycroftGrok/Lichii_Odin/actions/workflows/odin-armadaos-aarch64.yml) builds on native Ubuntu ARM64 and publishes a `.tar.gz`, `.AppImage` and `SHA256SUMS` as an **experimental prerelease** whenever build-related changes land on `odin-armadaos` (or when manually dispatched). It does not update the user's device automatically. A CI compile is not a replacement for on-device NCE/Vulkan/controller testing.
+
 ## What this fork addresses
 
 The initial ARM64 native-code execution (NCE) release crashed on `MRS CNTPCT_EL0`. The locally-tested branch adds timer handling for runtime NRO code, fixes the two-pass NSO loader so RomFS/ExeFS patches are visible to the first NCE scanning pass, and includes necessary GCC 16 build compatibility fixes. With the correct driver, the Odin 3 Ultra has launched Ocarina of Time at an observed 60 FPS. This is a single-device, single-game observation, not a performance guarantee.
@@ -27,7 +62,7 @@ Runtime configuration matters just as much as source changes:
 
 ## A. Published fork and known-good milestone
 
-The Odin modifications are publicly available in **[MycroftGrok/Lichii_Odin, branch `odin-armadaos`](https://github.com/MycroftGrok/Lichii_Odin/tree/odin-armadaos)**. The first verified snapshot was committed as [`64df748`](https://github.com/MycroftGrok/Lichii_Odin/commit/64df748b91d4ddbf2cfcbdd24563f5935ad82762). The *source changes* are published; a validated downloadable release binary is **not** provided yet.
+The Odin modifications are publicly available in **[MycroftGrok/Lichii_Odin, branch `odin-armadaos`](https://github.com/MycroftGrok/Lichii_Odin/tree/odin-armadaos)**. The first verified snapshot was committed as [`64df748`](https://github.com/MycroftGrok/Lichii_Odin/commit/64df748b91d4ddbf2cfcbdd24563f5935ad82762). The *source changes* are published; experimental automated ARM64 downloads are available after the GitHub release workflow completes successfully. On-device validation remains necessary.
 
 The original working Odin 3 Ultra retains `~/Applications/Lichii/build-nce-fix/bin/lichii`, the `lichii-nce-first-success-20261110` binary backup, and the `nce-first-success-20261110.patch` source snapshot. These local fallback artifacts are not included in Git. Keep them intact until a replacement build has passed game and controller testing.
 
@@ -68,7 +103,7 @@ cd "$HOME/Applications/Lichii/source"
 bash scripts/install-fresh.sh
 ```
 
-The installer creates a Fedora 44 ARM64 toolbox **only if `lichii-debug` is missing**, installs development packages inside it, runs CMake/Ninja, installs a **symlink to the built executable** at `~/Applications/Lichii/bin/lichii-odin`, and creates a KDE application launcher. It doesn't mutate the host's bootc base image. Fedora/RPM Fusion packaging can change: if `dnf` cannot find a dependency (particularly FFmpeg or Qt private headers), stop at the reported error and use the current upstream [dependency guide](https://github.com/zortos293/Lichii/blob/nx2/docs/Deps.md) to resolve it. **This clean-device installer has not yet been validated end-to-end on a second handheld.**
+The **source-build fallback** installer creates a Fedora 44 ARM64 toolbox **only if `lichii-debug` is missing**, installs development packages inside it, runs CMake/Ninja, installs a **symlink to the built executable** at `~/Applications/Lichii/bin/lichii-odin`, and creates a KDE application launcher. It doesn't mutate the host's bootc base image. Fedora/RPM Fusion packaging can change: if `dnf` cannot find a dependency (particularly FFmpeg or Qt private headers), stop at the reported error and use the current upstream [dependency guide](https://github.com/zortos293/Lichii/blob/nx2/docs/Deps.md) to resolve it. **This clean-device installer has not yet been validated end-to-end on a second handheld.**
 
 4. For a controller not showing in Lichii, run this on the **host**:
 
