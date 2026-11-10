@@ -9,21 +9,31 @@ BUILD="${ROOT}/build-${CAND}"
 cd "$REPO"
 [[ -z "$(git status --porcelain)" ]] || { echo 'Working tree not clean; aborting' >&2; exit 1; }
 [[ "$(git branch --show-current)" == "$CAND" ]] || { echo "Switch to $CAND before promotion" >&2; exit 1; }
+git merge-base --is-ancestor odin-armadaos "$CAND" || { echo 'Candidate diverged from stable; aborting' >&2; exit 1; }
 read -r -p "Did you personally test this candidate in-game? Type YES: " agree
 [[ "$agree" == YES ]] || { echo 'Promotion canceled'; exit 1; }
-# Only promote after a fast-forward is possible, so the user's stable branch remains identifiable.
-git merge-base --is-ancestor odin-armadaos "$CAND" || { echo 'Candidate diverged from stable; aborting' >&2; exit 1; }
+
+# Back up the actual stable binary before changing source branches or the launcher.
+bash "${REPO}/scripts/snapshot-stable.sh"
+
+# Keep the tested output independent of future builds to this candidate directory.
+mkdir -p "${ROOT}/bin" "${ROOT}/releases"
+RELEASE_DIR="$(mktemp -d "${ROOT}/releases/odin-promotion-XXXXXXXX")"
+RELEASE="${RELEASE_DIR}/lichii"
+cp -p -- "${BUILD}/bin/lichii" "$RELEASE"
+if [[ ! -s "$RELEASE" || ! -x "$RELEASE" ]] || ! cmp -s -- "${BUILD}/bin/lichii" "$RELEASE"; then
+  echo 'STOP: Candidate copy failed verification; stable launcher unchanged.' >&2
+  exit 1
+fi
+
 git switch odin-armadaos
 git merge --ff-only "$CAND"
-mkdir -p "${ROOT}/bin"
 TARGET="${ROOT}/bin/lichii-odin"
-if [[ -e "$TARGET" || -L "$TARGET" ]]; then
-  cp -a "$TARGET" "${TARGET}.previous"
-fi
 TEMP="${TARGET}.new.$$"
-trap 'rm -f "$TEMP"' EXIT
-ln -s "${BUILD}/bin/lichii" "$TEMP"
-mv -Tf "$TEMP" "$TARGET"
+trap 'rm -f -- "$TEMP"' EXIT
+ln -s -- "$RELEASE" "$TEMP"
+mv -Tf -- "$TEMP" "$TARGET"
 trap - EXIT
-echo 'Promoted tested update. Previous launch target retained as lichii-odin.previous.'
+echo "Promoted tested binary from $CAND"
+echo "Independent previous executable available via ${TARGET}.previous"
 echo "Optional push: git push odin-fork odin-armadaos"
