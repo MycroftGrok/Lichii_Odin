@@ -48,7 +48,7 @@ ls -l /dev/dri/renderD*
 
 `uname -m` must show `aarch64`. You want `Adreno ...` and `turnip Mesa driver`, *not only* llvmpipe. If `vulkaninfo` is absent, obtain Vulkan tools using the OS's recommended package workflow; do not overwrite the host graphics stack.
 
-2. Ensure `toolbox`, `git`, and `unzip` are installed by ArmadaOS. Clone the **published fork branch** (the repository's default branch may still be `nx2`, so the explicit `--branch` is required):
+2. Ensure `toolbox`, `git`, and `unzip` are installed by ArmadaOS. Clone the **published fork branch** (the explicit `--branch` keeps the intended patch set even if repository defaults change):
 
 ```bash
 mkdir -p "$HOME/Applications/Lichii"
@@ -61,7 +61,7 @@ git remote add upstream https://github.com/zortos293/Lichii.git
 
 If `~/Applications/Lichii/source` already exists, **do not delete it**. Use the existing checkout; inspect `git status` and `git remote -v` before attempting to change branches.
 
-3. The fork branch contains the scripts committed in section A. Run:
+3. The fork branch contains the installer and maintenance scripts. Run:
 
 ```bash
 cd "$HOME/Applications/Lichii/source"
@@ -123,10 +123,23 @@ Replace the placeholder timestamp with the candidate's actual timestamp. **Test 
 ```bash
 cd "$HOME/Applications/Lichii/source"
 bash scripts/promote-candidate.sh odin-update-YYYYMMDD-HHMMSS
-git push odin-fork odin-armadaos
+git push odin-fork odin-armadaos   # Original Odin checkout; fresh clones normally use 'origin'
 ```
 
-Promotion requires typing `YES`, fast-forwards `odin-armadaos` and saves the previous executable **link** to `~/Applications/Lichii/bin/lichii-odin.previous`. A candidate that needs manual conflict resolution must be committed and rebuilt before promotion. If an update turns out to have a runtime problem after promotion, launch the `.previous` executable using `LICHII_BINARY=...` while investigating; source history remains in Git.
+Promotion requires typing `YES` and fast-forwards `odin-armadaos`. It copies the tested executable into an independent versioned folder under `~/Applications/Lichii/releases/`, verifies the copy, and atomically updates the stable launcher. Before switching, it saves a verified **copy of the previous executable's bytes** under `~/Applications/Lichii/backups/` and links `~/Applications/Lichii/bin/lichii-odin.previous` to that independent copy. A candidate that needs manual conflict resolution must be committed and rebuilt before promotion. If a promoted update has a runtime problem, use the previously verified copy:
+
+```bash
+LICHII_BINARY="$HOME/Applications/Lichii/bin/lichii-odin.previous" \\
+  "$HOME/Applications/Lichii/source/scripts/launch-odin.sh"
+```
+
+The ordinary `build-deploy.sh` path also snapshots before rebuilding. If the build would otherwise overwrite the current stable executable, it parks the launcher on a verified backup first, then deploys an independent, checked copy. **These safety protections have not yet been exercised end-to-end on an Odin 2 or a clean Odin 3 installation.**
+
+### Which Git remote should you push to?
+
+On the original developer's Odin, the fork remote is named `odin-fork` and upstream Lichii is `origin`. On a clean clone of this fork, the fork is usually `origin` and upstream Lichii is `upstream`. Check with `git remote -v` before choosing a push target. `scripts/update-candidate.sh` accepts either the verified `upstream` remote or the original Odin's verified `origin` remote for fetching `zortos293/Lichii` updates. It will stop if it cannot verify the source.
+
+**Always run `git status --short` and `bash -n scripts/*.sh` before experimenting. Never run `build-deploy.sh` just to verify that a currently working binary still launches; use the existing launcher instead.**
 
 ## D. Controller persistence after reboot
 
