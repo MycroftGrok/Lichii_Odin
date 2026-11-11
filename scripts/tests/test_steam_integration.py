@@ -116,6 +116,7 @@ class SteamIntegrationTests(unittest.TestCase):
         print("Before log")
         with steam.record_latest_log("artwork"):
             print("ARTWORK: Example Game")
+            steam.report_progress("Scraping Steam artwork", 1, 3, "Example Game")
             print("portrait cover: not available", file=sys.stderr)
         path = steam.LATEST_LOG
         self.assertTrue(path.is_file())
@@ -125,6 +126,7 @@ class SteamIntegrationTests(unittest.TestCase):
         self.assertIn("ARTWORK: Example Game", result)
         self.assertIn("portrait cover: not available", result)
         self.assertIn("Result: finished", result)
+        self.assertNotIn("LICHII_PROGRESS ", result)
         self.assertNotIn("Before log", result)
 
     def test_latest_log_updates_even_if_action_fails(self):
