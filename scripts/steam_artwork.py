@@ -7,6 +7,7 @@ Uses standard-library HTTPS, exact title matching, and never overwrites artwork.
 from __future__ import annotations
 
 import getpass
+import datetime
 import json
 import os
 from pathlib import Path
@@ -17,6 +18,7 @@ from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
 
 KEY_FILE = Path.home() / ".config/lichii/steamgriddb-api-key"
+MATCH_FILE = Path.home() / ".config/lichii/steamgriddb-artwork-matches.json"
 API = "https://www.steamgriddb.com/api/v2"
 MAX_IMAGE = 15 * 1024 * 1024
 ARTWORK_TYPES = (
@@ -97,21 +99,90 @@ def request_json(path: str, key: str) -> list:
     return entries if isinstance(entries, list) else []
 
 
-def lookup_game_id(title: str, key: str) -> int | None:
+def exact_game_matches(title: str, key: str) -> list[dict]:
+    """All distinct SteamGridDB IDs with the exact normalized game title."""
     results = request_json("/search/autocomplete/" + quote(title, safe=""), key)
     expected = normalized(title)
-    matches = [x for x in results
-               if isinstance(x, dict)
-               and normalized(str(x.get("name", ""))) == expected
-               and isinstance(x.get("id"), int)]
+    matches = {}
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        game_id = item.get("id")
+        name = item.get("name")
+        if (type(game_id) is not int or game_id <= 0 or
+                not isinstance(name, str) or normalized(name) != expected):
+            continue
+        date = item.get("release_date")
+        year = None
+        if type(date) is int and 0 < date < 32503680000:
+            year = datetime.datetime.fromtimestamp(date, datetime.timezone.utc).year
+        matches[game_id] = {"id": game_id, "name": name, "year": year}
+    return sorted(matches.values(), key=lambda m: (m["year"] or 9999, m["id"]))
+
+
+def chosen_game_matches() -> dict:
+    if MATCH_FILE.is_symlink():
+        raise RuntimeError("Refusing symbolic link for SteamGridDB match preferences")
+    if not MATCH_FILE.is_file():
+        return {}
+    if MATCH_FILE.stat().st_size > 128 * 1024:
+        raise RuntimeError("SteamGridDB artwork preferences are unexpectedly large")
+    data = json.loads(MATCH_FILE.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("SteamGridDB artwork preferences must be a JSON object")
+    return data
+
+
+def set_game_match(appid: int, title: str, game_id: int, key: str) -> None:
+    """Persist a user-selected candidate, after validating an exact match."""
+    if not 0 < appid < (1 << 32) or game_id <= 0:
+        raise ValueError("Invalid Steam shortcut or SteamGridDB ID")
+    candidates = exact_game_matches(search_title(title), key)
+    if game_id not in {c["id"] for c in candidates}:
+        raise ValueError("Selected SteamGridDB game is not an exact title match")
+    selected = chosen_game_matches()
+    selected[str(appid)] = {"game_id": game_id, "title": title}
+    if MATCH_FILE.parent.is_symlink():
+        raise ValueError("Refusing symlink for Lichii configuration folder")
+    MATCH_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+            dir=MATCH_FILE.parent, prefix=".steamgriddb-match-", delete=False,
+            mode="w", encoding="utf-8") as stream:
+        tmp = Path(stream.name)
+        os.chmod(stream.fileno(), 0o600)
+        json.dump(selected, stream, indent=2, ensure_ascii=False)
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    try:
+        if MATCH_FILE.is_symlink():
+            raise ValueError("Refusing symbolic link for SteamGridDB preferences")
+        os.replace(tmp, MATCH_FILE)
+    finally:
+        tmp.unlink(missing_ok=True)
+    print(f"Saved SteamGridDB artwork match: {title} -> game ID {game_id}")
+
+
+def lookup_game_id(title: str, key: str, appid: int | None = None) -> int | None:
+    matches = exact_game_matches(title, key)
     if not matches:
-        print(f"  No unambiguous exact SteamGridDB match: {title}")
+        print(f"  No exact SteamGridDB match: {title}")
         return None
-    # Same title across versions/platforms: do not guess which art belongs to the ROM.
-    if len(matches) > 1:
-        print(f"  Ambiguous SteamGridDB matches ({len(matches)}): {title}")
-        return None
-    return matches[0]["id"]
+    if len(matches) == 1:
+        return matches[0]["id"]
+    if appid is not None:
+        preferred = chosen_game_matches().get(str(appid))
+        if (isinstance(preferred, dict) and preferred.get("title") == title and
+                preferred.get("game_id") in {row["id"] for row in matches}):
+            print(f"  Using saved SteamGridDB match ID {preferred['game_id']}")
+            return preferred["game_id"]
+    print(f"  Ambiguous SteamGridDB matches ({len(matches)}): {title}")
+    for candidate in matches:
+        year = f" ({candidate['year']})" if candidate["year"] else ""
+        print(f"    {candidate['id']}: {candidate['name']}{year}"
+              f" — https://www.steamgriddb.com/game/{candidate['id']}")
+    print("  Choose a matching SteamGridDB game in Lichii's Steam menu.")
+    return None
 
 
 def image_extension(blob: bytes, kind: str) -> str | None:
@@ -172,7 +243,7 @@ def scrape_one(grid_dir: Path, appid: int, title: str, key: str) -> tuple[int, i
     if not missing:
         return 0, 0
     query = search_title(title)
-    game_id = lookup_game_id(query, key)
+    game_id = lookup_game_id(query, key, appid=appid)
     if game_id is None:
         return 0, len(missing)
     installed = 0
