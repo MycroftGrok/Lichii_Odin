@@ -41,14 +41,16 @@ The isolated [Odin ARM64 GitHub Actions workflow](https://github.com/MycroftGrok
 
 ## Steam Integration — Switch / Switch 2 collections
 
-The Odin fork includes a **Steam** menu (in builds that include this feature) with four ROM-import/removal commands and two artwork actions:
+The Odin fork includes a **Steam** menu (in builds that include this feature):
 
 - **Import Switch roms to Steam**
 - **Import Switch 2 roms to Steam**
 - **Import all roms to Steam**
-- **Clear all roms from Steam**
 - **Scrape missing Steam artwork**
+- **Choose artwork edition for ambiguous games...**
 - **Configure SteamGridDB API key...**
+- **View latest log...** (scrollable viewer, **Copy to clipboard**, **Save as .log...**)
+- **Clear all roms from Steam**
 
 The Games application menu also has a separate **Steam Integration** shortcut that runs **Import all roms to Steam**.
 
@@ -65,6 +67,16 @@ This adds **Steam Integration** to the KDE **Games** menu, installs the safe ROM
 **Strict Lichii library scope:** Imports scan only the folders explicitly added to Lichii's game library (as saved in Lichii's `qt-config.ini` `Paths\gamedirs` entries). The scan respects each folder's **deep scan** setting. It does **not** infer nearby `Switch` or `Switch 2` folders, scan arbitrary `Games` directories, use recent-file history, or read Eden's library list. The old `--rom-root` override is disabled to prevent bypassing this restriction. To import games from another location, first add that exact directory inside Lichii's game library.
 
 Artwork scraping likewise processes only previously imported, Lichii-managed playable ROM entries that still reside in the currently configured Lichii game library. ROMs outside that library, including DLC/update packages, receive no scraping request. Already-imported Steam shortcuts are not silently removed when their source folder is removed from Lichii; the separate **Clear all roms from Steam** action still requires explicit confirmation.
+
+### Steam Integration log viewer
+
+**Steam → View latest log...** opens a scrollable, read-only window showing the **latest completed Steam Integration operation**. It has **Copy to clipboard** (the entire log) and **Save as .log...** (a standard Save As dialog; writes only to the selected file). The source log is never changed by the viewer.
+
+Imports, clear operations, artwork scrapes, and dry-runs automatically record stdout, stderr, Steam shutdown diagnostics, missing-game/artwork explanations, and completion/failure status to:
+
+`~/.local/share/lichii/logs/steam-integration-latest.log`
+
+The file is owner-only (mode 0600), replaced atomically when a run finishes, and not stored in the Git repository. Both **Steam menu** operations and **Konsole** CLI operations use it. The log contains game names, ROM locations, and Steam process information, so review it before sharing. API-key entry/configuration is not logged and the SteamGridDB key is not included in normal integration diagnostics. The log viewer shows a helpful empty state until the first operation completes. Steam Integration backups and the ROM library are unaffected.
 
 ### Steam artwork scraping (covers, banners, backgrounds, logos, icons)
 
