@@ -557,6 +557,46 @@ def set_shortcut_icons(user: Path, allowed_appids: set[int] | None = None) -> No
     print(f"Updated {len(changes)} Steam shortcut icon paths; backup: {target}")
 
 
+def eligible_artwork_apps() -> list[tuple[int, str]]:
+    """Read-only list of imported ROM shortcuts still in Lichii's game library."""
+    user, shortcuts, _cloud, _namespaces = discover_steam()
+    if not shortcuts.is_file():
+        return []
+    _, entries, _, _ = read_shortcuts(shortcuts.read_bytes())
+    roots = scan_roots([])
+    visible = {str(p) for p in roms_in(roots)
+               if not non_game_package_reason(p) and classify(p, "all") is not None}
+    return [(entry["appid"] & 0xffffffff, str(entry["name"]))
+            for entry in entries if owned(entry)
+            and get_path(entry) in visible and isinstance(entry["appid"], int)]
+
+
+def list_artwork_match_options() -> None:
+    art = get_artwork_module()
+    key = art.token()
+    if not key:
+        abort("Set the SteamGridDB API key in Lichii before choosing artwork")
+    choices = []
+    for appid, title in eligible_artwork_apps():
+        candidates = art.exact_game_matches(art.search_title(title), key)
+        if len(candidates) > 1:
+            choices.append({"appid": appid, "title": title, "matches": candidates})
+    print(json.dumps(choices, ensure_ascii=False))
+
+
+def choose_artwork_match(appid: int, game_id: int) -> None:
+    games = dict(eligible_artwork_apps())
+    title = games.get(appid)
+    if title is None:
+        abort("Cannot select artwork match: the Steam shortcut is not an "
+              "imported game in Lichii's configured library.")
+    art = get_artwork_module()
+    key = art.token()
+    if not key:
+        abort("Set the SteamGridDB API key in Lichii first")
+    art.set_game_match(appid, title, game_id, key)
+
+
 def scrape_apps(user: Path, apps: list[tuple[int, str]], args) -> None:
     if args.no_artwork:
         print("Artwork skipped (--no-artwork).")
@@ -757,6 +797,11 @@ def main():
     p.add_argument("--yes", action="store_true", help="Confirm clear (use with caution)")
     p.add_argument("--no-artwork", action="store_true",
                    help="Skip optional SteamGridDB artwork scraping")
+    p.add_argument("--list-artwork-matches", action="store_true",
+                   help="List ambiguous SteamGridDB choices as JSON (read-only)")
+    p.add_argument("--set-artwork-match", nargs=2, type=int,
+                   metavar=("STEAM_APPID", "STEAMGRIDDB_ID"),
+                   help="Save an exact-match artwork choice for a Lichii-managed shortcut")
     p.add_argument("--configure-artwork", action="store_true",
                    help="Store your SteamGridDB API key locally, without importing games")
     args = p.parse_args()
@@ -770,6 +815,12 @@ def main():
             return
         if args.configure_artwork:
             get_artwork_module().configure_key()
+            return
+        if args.list_artwork_matches:
+            list_artwork_match_options()
+            return
+        if args.set_artwork_match is not None:
+            choose_artwork_match(*args.set_artwork_match)
             return
         do_import(args)
     except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
