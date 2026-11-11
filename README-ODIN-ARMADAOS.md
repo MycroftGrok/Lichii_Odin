@@ -88,13 +88,15 @@ Or configure it using a single Konsole command (the key input is hidden):
 python3 "$HOME/.local/share/lichii/tools/steam_artwork.py" --configure
 ```
 
-Once the key is configured, **importing ROMs automatically downloads artwork** for any imported games that are missing it. To scrape artwork for games you've *already* added to Steam, select **Steam → Scrape missing Steam artwork** or run:
+Once the key is configured, **importing ROMs automatically downloads artwork** for any imported games that are missing it.
+
+The artwork match overrides are stored locally at `~/.config/lichii/steamgriddb-artwork-matches.json` with owner-only permissions; they contain game IDs only, **never the API key**. To scrape artwork for games you've *already* added to Steam, select **Steam → Scrape missing Steam artwork** or run:
 
 ```bash
 python3 "$HOME/.local/share/lichii/tools/steam-integration.py" --mode artwork
 ```
 
-**Safety:** The scraper uses exact game-title matches and skips ambiguous or missing results rather than picking the wrong game. It downloads only static PNG/JPEG images and ICO icons from SteamGridDB's HTTPS CDN. It does **not** replace existing or manually customized Steam artwork, and it does not modify ROM contents or emulator saves. If no API key is available, ROM imports still work; only artwork downloads are skipped. Some games may lack certain types of artwork. Steam must be fully closed when importing or scraping. If the client is running in the background, Lichii now identifies the specific Steam processes and offers to request their shutdown **only after you approve**. This can interrupt Steam games or downloads. If Steam will not exit, the helper aborts without modifying Steam metadata; it never uses SIGKILL.
+**Safety:** The scraper first extracts an explicit 16-hex Nintendo Title ID from a ROM filename (such as `[0400486024DEC000]`). Because SteamGridDB's game IDs are not Nintendo title IDs, a Nintendo ID only selects artwork automatically when a reviewed ID-to-SteamGridDB mapping is available. The verified 2026 Switch 2 Zelda: Ocarina of Time ID `0400486024DEC000` maps to SteamGridDB game `5532594`, not the original 1998 edition. Unknown title IDs fall back to exact-title matching and, for ambiguity, **Steam → Choose artwork edition for ambiguous games...**; your selection is saved locally against the Nintendo title ID for future runs. No unsupported ID is guessed. It downloads only static PNG/JPEG images and ICO icons from SteamGridDB's HTTPS CDN. It does **not** replace existing or manually customized Steam artwork, and it does not modify ROM contents or emulator saves. If no API key is available, ROM imports still work; only artwork downloads are skipped. Some games may lack certain types of artwork. Steam must be fully closed when importing or scraping. If the client is running in the background, Lichii now identifies the specific Steam processes and offers to request their shutdown **only after you approve**. This can interrupt Steam games or downloads. If Steam will not exit, the helper aborts without modifying Steam metadata; it never uses SIGKILL.
 
 
 To diagnose an apparently closed Steam client without changing anything:
