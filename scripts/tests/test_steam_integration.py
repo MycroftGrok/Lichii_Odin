@@ -103,6 +103,19 @@ class SteamIntegrationTests(unittest.TestCase):
         self.assertEqual(len(entries), 3)
         self.assertEqual(entries[2]["name"], "Example Two")
 
+    def test_shell_safe_rom_paths(self):
+        import shlex
+        rom = self.root / "Switch" / "Example $(touch BAD) [USA];.nsp"
+        rom.write_bytes(b"placeholder")
+        appid = 0x80000420
+        sample = (b"\x00shortcuts\x00" +
+                  steam.make_shortcut(0, appid, "Special game", rom) + b"\x08\x08")
+        _, entries, _, _ = steam.read_shortcuts(sample)
+        self.assertEqual(len(entries), 1)
+        self.assertTrue(steam.owned(entries[0]))
+        self.assertEqual(shlex.split(entries[0]["options"]), [str(rom)])
+        self.assertEqual(steam.get_path(entries[0]), str(rom.resolve()))
+
     def test_configured_gamedirs(self):
         extra = steam.HOME / "Extra Games"
         extra.mkdir()
