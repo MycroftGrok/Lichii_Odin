@@ -296,6 +296,23 @@ def classify(rom: Path, selected: str) -> str | None:
     return {"switch": "Switch", "switch2": "Switch 2"}.get(selected)
 
 
+def non_game_package_reason(rom: Path) -> str | None:
+    """Conservatively filter obvious updates/DLC from Steam's playable game list.
+
+    Filename patterns are not a substitute for reading Switch content metadata.
+    Only filter explicitly named add-on packages or add-on directories.
+    """
+    addon_dirs = {"dlc", "downloadablecontent", "updates", "update", "patches", "patch"}
+    for parent in rom.parents:
+        if re.sub(r"[\s_.-]+", "", parent.name).casefold() in addon_dirs:
+            return "DLC/update directory"
+    name = rom.stem
+    if re.search(r"(?<![a-z0-9])(?:dlc|update|patch|unlocker)(?![a-z0-9])",
+                 name, flags=re.I):
+        return "DLC/update package"
+    return None
+
+
 def parse_collections(cloud: Path, namespaces: Path):
     data = json.loads(cloud.read_text(encoding="utf-8"))
     ns = json.loads(namespaces.read_text(encoding="utf-8"))
@@ -508,6 +525,11 @@ def do_import(args):
             abort("No Lichii ROM folders detected. Use --rom-root /path/to/games.")
         print("ROM folders:", *map(str, roots), sep="\n  ")
         for rom in roms_in(roots):
+            reason = non_game_package_reason(rom)
+            if reason:
+                print(f"SKIP {reason}: {rom.name}")
+                skipped += 1
+                continue
             group = classify(rom, args.mode)
             if group is None:
                 print(f"SKIP unclassified: {rom.name} (put in Switch or Switch 2 folder)")
