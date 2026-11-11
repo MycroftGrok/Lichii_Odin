@@ -131,6 +131,18 @@ class SteamIntegrationTests(unittest.TestCase):
         self.assertEqual(shlex.split(entries[0]["options"]), [str(rom)])
         self.assertEqual(steam.get_path(entries[0]), str(rom.resolve()))
 
+    def test_display_names_remove_dump_metadata(self):
+        first = Path("/roms/Switch 2/The Legend of Zelda Ocarina of Time "
+                     "[0400486024DEC000][v131072].nup")
+        self.assertEqual(steam.game_display_name(first),
+                         "The Legend of Zelda Ocarina of Time")
+        second = Path("/roms/Switch/Diablo III Eternal Collection "
+                      "[Diablo III Blizzard's 30th Anniversary Bundle] "
+                      "[01001B300B9BF064] [PE] [v0].xci")
+        self.assertEqual(steam.game_display_name(second),
+                         "Diablo III Eternal Collection "
+                         "[Diablo III Blizzard's 30th Anniversary Bundle] [PE]")
+
     def test_exclude_dlc_updates_and_keep_full_games(self):
         examples = [
             "Mario Kart 8 Deluxe - Wave 1-6 (World) (DLC Unlocker) (eShop).nsp",
