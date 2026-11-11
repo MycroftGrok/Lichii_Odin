@@ -455,8 +455,8 @@ MainWindow::MainWindow(bool has_broken_vulkan)
                 return;
             }
             bool request_shutdown = false;
-            const int code = status_probe.exitCode();
-            if (code == 3) {
+            const int probe_exit_code = status_probe.exitCode();
+            if (probe_exit_code == 3) {
                 const QString processes =
                     QString::fromUtf8(status_probe.readAll()).trimmed();
                 const QString prompt =
@@ -473,7 +473,7 @@ MainWindow::MainWindow(bool has_broken_vulkan)
                     return;
                 }
                 request_shutdown = true;
-            } else if (code != 0) {
+            } else if (probe_exit_code != 0) {
                 QMessageBox::warning(
                     this, tr("Steam Integration"),
                     tr("Could not verify Steam's running state:\n%1\n"
