@@ -411,7 +411,7 @@ MainWindow::MainWindow(bool has_broken_vulkan)
 
 #if defined(__linux__)
     // Expose Steam ROM integration in the native Lichii menu bar on Linux.
-    // The helper edits only the user's Steam metadata and refuses to run while Steam is open.
+    // The helper checks Steam and requests shutdown only after explicit user confirmation.
     auto* steam_menu = new QMenu(tr("Steam"), this);
     ui->menubar->insertMenu(ui->menu_Help->menuAction(), steam_menu);
     const auto add_steam_action = [this, steam_menu](const QString& title,
@@ -437,6 +437,48 @@ MainWindow::MainWindow(bool has_broken_vulkan)
                        "Your ROMs, saved games, other Steam shortcuts and collections "
                        "will be preserved. Steam must be completely closed."),
                     QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) {
+                return;
+            }
+            // Steam often stays in the tray/background after closing its window.
+            // Probe the exact live processes before doing any metadata writes.
+            // A real Steam session requires an explicit user-confirmed exit.
+            QProcess status_probe;
+            status_probe.setProcessChannelMode(QProcess::MergedChannels);
+            status_probe.start(QStringLiteral("python3"),
+                               QStringList{helper, QStringLiteral("--check-steam")});
+            if (!status_probe.waitForFinished(8000) ||
+                status_probe.exitStatus() != QProcess::NormalExit) {
+                QMessageBox::warning(
+                    this, tr("Steam Integration"),
+                    tr("Could not determine whether Steam is still running. "
+                       "No Steam files were changed."));
+                return;
+            }
+            bool request_shutdown = false;
+            const int code = status_probe.exitCode();
+            if (code == 3) {
+                const QString processes =
+                    QString::fromUtf8(status_probe.readAll()).trimmed();
+                const QString prompt =
+                    tr("%1\n\nSteam may still be running in the background even though "
+                       "its window is closed.\n\n"
+                       "Request a Steam shutdown before continuing? "
+                       "This can interrupt active Steam games or downloads. "
+                       "No Steam files will be modified unless Steam has fully exited.")
+                        .arg(processes);
+                if (QMessageBox::question(
+                        this, tr("Steam is still running"), prompt,
+                        QMessageBox::Yes | QMessageBox::No,
+                        QMessageBox::No) != QMessageBox::Yes) {
+                    return;
+                }
+                request_shutdown = true;
+            } else if (code != 0) {
+                QMessageBox::warning(
+                    this, tr("Steam Integration"),
+                    tr("Could not verify Steam's running state:\n%1\n"
+                       "No Steam files were changed.")
+                        .arg(QString::fromUtf8(status_probe.readAll()).trimmed()));
                 return;
             }
             auto* process = new QProcess(this);
@@ -465,6 +507,9 @@ MainWindow::MainWindow(bool has_broken_vulkan)
             QStringList args{helper, QStringLiteral("--mode"), mode};
             if (mode == QStringLiteral("clear")) {
                 args << QStringLiteral("--yes");
+            }
+            if (request_shutdown) {
+                args << QStringLiteral("--shutdown-steam");
             }
             process->start(QStringLiteral("python3"), args);
         });
