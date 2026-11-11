@@ -90,6 +90,8 @@
 #include <QInputDialog>
 #include <QMimeData>
 #include <QPalette>
+#include <QProcess>
+#include <QMenu>
 #include <QProgressDialog>
 #include <QScreen>
 #include <QShortcut>
@@ -400,6 +402,74 @@ MainWindow::MainWindow(bool has_broken_vulkan)
     setAcceptDrops(true);
     ui->setupUi(this);
     statusBar()->hide();
+
+#if defined(__linux__)
+    // Expose Steam ROM integration in the native Lichii menu bar on Linux.
+    // The helper edits only the user's Steam metadata and refuses to run while Steam is open.
+    auto* steam_menu = new QMenu(tr("Steam"), this);
+    ui->menubar->insertMenu(ui->menu_Help->menuAction(), steam_menu);
+    const auto add_steam_action = [this, steam_menu](const QString& title,
+                                                     const QString& mode) {
+        auto* action = steam_menu->addAction(title);
+        connect(action, &QAction::triggered, this, [this, mode]() {
+            QString helper = QDir::homePath() +
+                             QStringLiteral("/.local/share/lichii/tools/steam-integration.py");
+            if (!QFileInfo::exists(helper)) {
+                helper = QDir::homePath() +
+                         QStringLiteral("/Applications/Lichii/source/scripts/steam-integration.py");
+            }
+            if (!QFileInfo::exists(helper)) {
+                QMessageBox::warning(this, tr("Steam Integration"),
+                                     tr("Steam integration is not installed. Update your Odin fork "
+                                        "and run scripts/install-launcher.sh."));
+                return;
+            }
+            if (mode == QStringLiteral("clear") &&
+                QMessageBox::question(
+                    this, tr("Clear Lichii ROMs from Steam"),
+                    tr("Remove all Steam shortcuts created by Lichii Steam Integration? "
+                       "Your ROMs, saved games, other Steam shortcuts and collections "
+                       "will be preserved. Steam must be completely closed."),
+                    QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) {
+                return;
+            }
+            auto* process = new QProcess(this);
+            process->setProcessChannelMode(QProcess::MergedChannels);
+            connect(process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                    this, [this, process](int code, QProcess::ExitStatus status) {
+                        const QString output = QString::fromUtf8(process->readAll()).trimmed();
+                        const QString report = output.isEmpty()
+                                                   ? tr("Steam Integration finished without output.")
+                                                   : output.right(12000);
+                        if (status == QProcess::NormalExit && code == 0) {
+                            QMessageBox::information(this, tr("Steam Integration"), report);
+                        } else {
+                            QMessageBox::warning(this, tr("Steam Integration"), report);
+                        }
+                        process->deleteLater();
+                    });
+            connect(process, &QProcess::errorOccurred, this,
+                    [this, process](QProcess::ProcessError failure) {
+                        if (failure == QProcess::FailedToStart) {
+                            QMessageBox::warning(this, tr("Steam Integration"),
+                                                 tr("Could not launch Python 3 Steam helper."));
+                            process->deleteLater();
+                        }
+                    });
+            QStringList args{helper, QStringLiteral("--mode"), mode};
+            if (mode == QStringLiteral("clear")) {
+                args << QStringLiteral("--yes");
+            }
+            process->start(QStringLiteral("python3"), args);
+        });
+    };
+    add_steam_action(tr("Import Switch roms to Steam"), QStringLiteral("switch"));
+    add_steam_action(tr("Import Switch 2 roms to Steam"), QStringLiteral("switch2"));
+    add_steam_action(tr("Import all roms to Steam"), QStringLiteral("all"));
+    steam_menu->addSeparator();
+    add_steam_action(tr("Clear all roms from Steam"), QStringLiteral("clear"));
+#endif
+
 
     startup_icon_theme = QIcon::themeName();
     // fallback can only be set once, colorful theme icons are okay on both light/dark
