@@ -173,13 +173,105 @@ def get_path(entry: dict) -> str | None:
     return None
 
 
-def steam_running() -> bool:
+def steam_processes() -> list[tuple[int, str]]:
+    """Identify *this user's* live Steam processes, not all users' processes.
+
+    The ps 'comm' field can truncate names to 15 characters on Linux. Do
+    not treat zombies as active. Keep the reported PIDs for diagnostics.
+    """
     try:
-        ps = subprocess.check_output(["ps", "-eo", "comm="], text=True)
-    except (OSError, subprocess.CalledProcessError):
-        abort("Cannot check running processes; Steam files left unchanged")
-    return any(n.strip() in ("steam", "steamwebhelper", "steam-runtime-launcher")
-               for n in ps.splitlines())
+        ps = subprocess.check_output(
+            ["ps", "-u", str(os.getuid()), "-o", "pid=,stat=,comm="],
+            text=True, timeout=5,
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        abort("Cannot check Steam processes; Steam files left unchanged")
+    found = []
+    for line in ps.splitlines():
+        fields = line.split(None, 2)
+        if len(fields) != 3:
+            continue
+        pid_text, state, name = fields
+        if not pid_text.isdecimal() or state.startswith("Z"):
+            continue
+        if name in ("steam", "steamwebhelper") or name.startswith("steam-runtime-"):
+            found.append((int(pid_text), name))
+    return found
+
+
+def steam_process_summary(processes: list[tuple[int, str]]) -> str:
+    return ", ".join(f"{name} (PID {pid})" for pid, name in processes[:12]) + (
+        f", and {len(processes) - 12} more" if len(processes) > 12 else ""
+    )
+
+
+def steam_running() -> bool:
+    return bool(steam_processes())
+
+
+def close_steam_gracefully():
+    """Opt-in Steam shutdown. Never SIGKILL or bypass the final live check."""
+    import signal
+
+    live = steam_processes()
+    if not live:
+        return
+    print("Steam is active in the background:", steam_process_summary(live),
+          flush=True)
+    # Ask the Steam client to exit cleanly if its launcher is accessible.
+    # A toolbox may not have the host's Steam launcher installed.
+    launcher = shutil.which("steam")
+    if launcher and any(name == "steam" for _, name in live):
+        try:
+            result = subprocess.run([launcher, "-shutdown"], timeout=8,
+                                    stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.PIPE, text=True)
+            if result.returncode == 0:
+                print("Requested a normal Steam client shutdown.", flush=True)
+            else:
+                print("Steam shutdown command returned a nonzero status.",
+                      flush=True)
+        except (OSError, subprocess.TimeoutExpired):
+            print("Steam shutdown command was unavailable or timed out.",
+                  flush=True)
+        for _ in range(12):
+            if not steam_processes():
+                print("PASS: Steam has exited.", flush=True)
+                return
+            time.sleep(0.5)
+
+    # SIGTERM is an ordinary termination request, never a forced kill.
+    # Only send it to the exact current-user Steam process PIDs the scanner
+    # recognizes. Do not use pkill, killall, sudo, or SIGKILL.
+    remaining = steam_processes()
+    print("Requesting termination of remaining Steam processes:",
+          steam_process_summary(remaining), flush=True)
+    for pid, _ in remaining:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            print(f"Cannot signal Steam PID {pid}; no Steam files changed.",
+                  flush=True)
+    for _ in range(20):
+        if not steam_processes():
+            print("PASS: Steam has exited.", flush=True)
+            return
+        time.sleep(0.5)
+    abort("Steam did not exit: " + steam_process_summary(steam_processes())
+          + ". Steam files left unchanged. Close it manually and retry.")
+
+
+def ensure_steam_closed(args):
+    if not steam_running():
+        return
+    if getattr(args, "shutdown_steam", False):
+        close_steam_gracefully()
+    if steam_running():
+        abort("Steam is still active: " + steam_process_summary(steam_processes())
+              + ". Close it, or explicitly allow a shutdown when prompted. "
+                "No Steam files changed.")
 
 
 def discover_steam():
@@ -471,9 +563,7 @@ def scrape_apps(user: Path, apps: list[tuple[int, str]], args) -> None:
 
 
 def do_import(args):
-    if steam_running():
-        abort("Quit Steam completely before using Steam Integration. "
-              "Steam overwrites shortcuts while running.")
+    ensure_steam_closed(args)
     if not (LAUNCHER.is_file() and SCRIPT.is_file()):
         abort("Lichii Steam launcher missing. Run scripts/install-launcher.sh first.")
     user, shortcuts, cloud, namespaces = discover_steam()
@@ -643,6 +733,10 @@ def main():
     p.add_argument("--rom-root", action="append", default=[],
                    help="Extra ROM folder to scan (repeatable)")
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--check-steam", action="store_true",
+                   help="Only report active Steam processes; exit 3 if running")
+    p.add_argument("--shutdown-steam", action="store_true",
+                   help="Explicit permission to request Steam shutdown if active")
     p.add_argument("--yes", action="store_true", help="Confirm clear (use with caution)")
     p.add_argument("--no-artwork", action="store_true",
                    help="Skip optional SteamGridDB artwork scraping")
@@ -650,6 +744,13 @@ def main():
                    help="Store your SteamGridDB API key locally, without importing games")
     args = p.parse_args()
     try:
+        if args.check_steam:
+            live = steam_processes()
+            if live:
+                print("Steam running: " + steam_process_summary(live), flush=True)
+                sys.exit(3)
+            print("Steam is not running.", flush=True)
+            return
         if args.configure_artwork:
             get_artwork_module().configure_key()
             return
