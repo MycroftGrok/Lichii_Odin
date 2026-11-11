@@ -24,6 +24,7 @@ class SteamIntegrationTests(unittest.TestCase):
         steam.PROFILES = [home / ".config/lichii/qt-config.ini"]
         steam.STEAM_ROOTS = [home / ".local/share/Steam"]
         steam.BACKUPS = home / ".local/share/lichii/backups"
+        steam.LATEST_LOG = home / ".local/share/lichii/logs/steam-integration-latest.log"
         steam.steam_running = lambda: False
         steam.SCRIPT.parent.mkdir(parents=True)
         steam.SCRIPT.write_text("#!/usr/bin/env bash\n")
@@ -74,6 +75,46 @@ class SteamIntegrationTests(unittest.TestCase):
     def run_mode(mode):
         steam.do_import(Namespace(mode=mode, rom_root=[], dry_run=False, yes=True,
                                        no_artwork=True, configure_artwork=False))
+
+    def test_latest_log_captures_stdout_stderr_and_finished_status(self):
+        import sys
+        print("Before log")
+        with steam.record_latest_log("artwork"):
+            print("ARTWORK: Example Game")
+            print("portrait cover: not available", file=sys.stderr)
+        path = steam.LATEST_LOG
+        self.assertTrue(path.is_file())
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        result = path.read_text()
+        self.assertIn("Action: artwork", result)
+        self.assertIn("ARTWORK: Example Game", result)
+        self.assertIn("portrait cover: not available", result)
+        self.assertIn("Result: finished", result)
+        self.assertNotIn("Before log", result)
+
+    def test_latest_log_updates_even_if_action_fails(self):
+        import sys
+        with steam.record_latest_log("switch"):
+            print("OLD RESULT")
+        with self.assertRaisesRegex(RuntimeError, "Steam not closed"):
+            with steam.record_latest_log("artwork"):
+                print("ERROR: Steam not closed", file=sys.stderr)
+                raise RuntimeError("Steam not closed")
+        result = steam.LATEST_LOG.read_text()
+        self.assertNotIn("OLD RESULT", result)
+        self.assertIn("ERROR: Steam not closed", result)
+        self.assertIn("Result: failed or interrupted", result)
+        self.assertIn("Finished:", result)
+
+    def test_latest_log_rejects_symlink_without_overwriting_target(self):
+        original = Path(self.temp.name) / "external.log"
+        original.write_text("untouched")
+        steam.LATEST_LOG.parent.mkdir(parents=True)
+        steam.LATEST_LOG.symlink_to(original)
+        with self.assertRaisesRegex(RuntimeError, "symbolic-link Steam log"):
+            with steam.record_latest_log("artwork"):
+                print("This should not be logged")
+        self.assertEqual(original.read_text(), "untouched")
 
     def test_steam_process_detection_current_user_ignores_zombies(self):
         from unittest.mock import patch
