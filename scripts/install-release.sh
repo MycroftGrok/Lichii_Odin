@@ -190,7 +190,15 @@ else
       "https://raw.githubusercontent.com/MycroftGrok/Lichii_Odin/odin-armadaos/scripts/steam-integration.py" \
       -o "$HELPER"
 fi
-python3 -m py_compile "$HELPER"
+ART_HELPER="$HOME/.local/share/lichii/tools/steam_artwork.py"
+if [[ -f "$ROOT/source/scripts/steam_artwork.py" ]]; then
+    cp -p "$ROOT/source/scripts/steam_artwork.py" "$ART_HELPER"
+else
+    curl -fLsS --retry 3 \
+      "https://raw.githubusercontent.com/MycroftGrok/Lichii_Odin/odin-armadaos/scripts/steam_artwork.py" \
+      -o "$ART_HELPER"
+fi
+python3 -m py_compile "$HELPER" "$ART_HELPER"
 cat > "$HOME/.local/bin/lichii-steam-game" <<'WRAPPER'
 #!/usr/bin/env bash
 set -euo pipefail
