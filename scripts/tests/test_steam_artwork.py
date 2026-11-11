@@ -34,6 +34,45 @@ class ArtTests(unittest.TestCase):
         ]):
             self.assertIsNone(art.lookup_game_id("Example Game", "fake-key"))
 
+    def test_nintendo_title_id_selects_correct_version(self):
+        # The 2026 Switch 2 game's Nintendo Title ID maps to its distinct
+        # SteamGridDB listing, not the identically named 1998 original.
+        title = "The Legend of Zelda Ocarina of Time"
+        matches = [
+            {"id": 21202, "name": "The Legend of Zelda: Ocarina of Time",
+             "release_date": 893980800},
+            {"id": 5532594, "name": "The Legend of Zelda: Ocarina of Time",
+             "release_date": 1793491200},
+        ]
+        rom = ("/run/media/deck/AndroidCard/roms/Switch 2/"
+               "The Legend of Zelda Ocarina of Time [0400486024DEC000][v131072].nup")
+        self.assertEqual(art.title_id_from_rom(rom), "0400486024DEC000")
+        self.assertIsNone(art.title_id_from_rom("/roms/No ID.nsp"))
+        with mock.patch.object(art, "request_json", return_value=matches):
+            self.assertEqual(art.lookup_game_id(
+                title, "fake", appid=2345,
+                title_id=art.title_id_from_rom(rom)), 5532594)
+            self.assertIsNone(art.lookup_game_id(
+                title, "fake", appid=2345, title_id="0400AAAABBBBCCCC"))
+
+    def test_title_id_choice_persisted_for_unknown_id(self):
+        matches = [
+            {"id": 81, "name": "Example Game"},
+            {"id": 82, "name": "Example Game"},
+        ]
+        with mock.patch.object(art, "MATCH_FILE",
+                               Path(self.temp.name) / "game-matches.json"), \
+             mock.patch.object(art, "request_json", return_value=matches):
+            art.set_game_match(2345, "Example Game", 82, "fake",
+                               title_id="0100AAAABBBBCCCC")
+            self.assertEqual(art.lookup_game_id(
+                "Example Game", "fake", appid=9999,
+                title_id="0100AAAABBBBCCCC"), 82)
+            self.assertIsNone(art.lookup_game_id(
+                "Other Game", "fake", appid=9999,
+                title_id="0100AAAABBBBCCCC"))
+            self.assertEqual(art.MATCH_FILE.stat().st_mode & 0o777, 0o600)
+
     def test_image_files_and_no_overwrite(self):
         def fake_json(path, key):
             if path.startswith("/search/autocomplete/"):
