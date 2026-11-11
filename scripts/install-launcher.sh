@@ -48,5 +48,40 @@ if command -v kbuildsycoca6 >/dev/null 2>&1; then
 fi
 
 echo "PASS: Games menu shortcut: $MENU"
+
+# Steam ROM shortcut integration uses a separate wrapper and never changes
+# the verified Lichii launcher or active executable.
+STEAM_HELPER="${ROOT}/source/scripts/steam-integration.py"
+[[ -f "$STEAM_HELPER" ]] || { echo "Missing Steam integration helper: $STEAM_HELPER" >&2; exit 1; }
+mkdir -p "$HOME/.local/share/lichii/tools"
+cp -p "$STEAM_HELPER" "$HOME/.local/share/lichii/tools/steam-integration.py"
+cat > "$HOME/.local/bin/lichii-steam-game" <<'WRAPPER'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ $# -ne 1 || ! -f "$1" ]]; then
+    echo "Expected one existing ROM file path" >&2
+    exit 1
+fi
+exec "$HOME/.local/bin/lichii-odin" -f -g "$1"
+WRAPPER
+chmod +x "$HOME/.local/bin/lichii-steam-game"
+
+STEAM_MENU="$HOME/.local/share/applications/lichii-steam-integration.desktop"
+cat > "$STEAM_MENU" <<DESKTOP
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Steam Integration
+GenericName=Import Lichii ROMs into Steam
+Comment=Import Switch and Switch 2 ROMs into Steam collections without duplicates
+Exec=/usr/bin/python3 $HOME/.local/share/lichii/tools/steam-integration.py --mode all
+Icon=steam
+Terminal=true
+Categories=Game;Utility;
+Keywords=Steam;Lichii;Switch;Switch2;
+DESKTOP
+chmod +x "$STEAM_MENU"
+echo "PASS: Games menu shortcut 'Steam Integration': $STEAM_MENU"
+
 echo "PASS: Desktop shortcut: $DESKTOP_DIR/lichii-odin.desktop"
 echo "PASS: Existing stable emulator remains: $(readlink -f "$TARGET")"
