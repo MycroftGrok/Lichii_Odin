@@ -83,6 +83,14 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QDialog>
+#include <QFile>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QPlainTextEdit>
+#include <QPushButton>
+#include <QSaveFile>
+#include <QVBoxLayout>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFutureWatcher>
@@ -677,6 +685,96 @@ MainWindow::MainWindow(bool has_broken_vulkan)
             QMessageBox::warning(this, tr("SteamGridDB artwork"),
                                  tr("Could not save the API key completely."));
         }
+    });
+    steam_menu->addSeparator();
+    auto* view_latest_log = steam_menu->addAction(tr("View latest log..."));
+    connect(view_latest_log, &QAction::triggered, this, [this]() {
+        const QString log_path = QDir::homePath() +
+                                 QStringLiteral("/.local/share/lichii/logs/"
+                                                "steam-integration-latest.log");
+        QFile log_file(log_path);
+        QString content;
+        bool available = false;
+        if (log_file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            content = QString::fromUtf8(log_file.readAll());
+            available = true;
+        } else if (!QFileInfo::exists(log_path)) {
+            content = tr("No Steam Integration log yet.\n\n"
+                         "Run an import or 'Scrape missing Steam artwork' first, "
+                         "then reopen this window. Logs are saved automatically.");
+        } else {
+            content = tr("Unable to read the latest Steam Integration log:\n%1")
+                          .arg(log_file.errorString());
+        }
+
+        QDialog viewer(this);
+        viewer.setWindowTitle(tr("Latest Steam Integration Log"));
+        viewer.resize(820, 510);
+        auto* layout = new QVBoxLayout(&viewer);
+        auto* source = new QLabel(tr("Latest completed run: %1").arg(log_path), &viewer);
+        source->setWordWrap(true);
+        layout->addWidget(source);
+
+        auto* log_text = new QPlainTextEdit(&viewer);
+        log_text->setReadOnly(true);
+        log_text->setPlainText(content);
+        layout->addWidget(log_text);
+
+        auto* buttons = new QHBoxLayout();
+        auto* copy_button = new QPushButton(tr("Copy to clipboard"), &viewer);
+        auto* save_button = new QPushButton(tr("Save as .log..."), &viewer);
+        auto* close_button = new QPushButton(tr("Close"), &viewer);
+        copy_button->setEnabled(available);
+        save_button->setEnabled(available);
+        buttons->addWidget(copy_button);
+        buttons->addWidget(save_button);
+        buttons->addStretch();
+        buttons->addWidget(close_button);
+        layout->addLayout(buttons);
+
+        connect(copy_button, &QPushButton::clicked, &viewer, [content]() {
+            QGuiApplication::clipboard()->setText(content);
+        });
+        connect(save_button, &QPushButton::clicked, &viewer,
+                [this, &viewer, content]() {
+                    QFileDialog save_dialog(
+                        &viewer, tr("Save Steam Integration Log"),
+                        QDir::homePath() + QStringLiteral("/steam-integration-latest.log"),
+                        tr("Log files (*.log)"));
+                    save_dialog.setAcceptMode(QFileDialog::AcceptSave);
+                    save_dialog.setDefaultSuffix(QStringLiteral("log"));
+                    if (save_dialog.exec() != QDialog::Accepted ||
+                        save_dialog.selectedFiles().isEmpty()) {
+                        return;
+                    }
+                    const QString destination = save_dialog.selectedFiles().first();
+                    if (!destination.endsWith(QStringLiteral(".log"), Qt::CaseInsensitive)) {
+                        QMessageBox::warning(
+                            &viewer, tr("Save Steam Integration Log"),
+                            tr("Choose a filename ending with .log. No file was saved."));
+                        return;
+                    }
+                    QSaveFile output(destination);
+                    if (!output.open(QIODevice::WriteOnly)) {
+                        QMessageBox::warning(
+                            &viewer, tr("Save Steam Integration Log"),
+                            tr("Could not open the selected file:\n%1").arg(output.errorString()));
+                        return;
+                    }
+                    const QByteArray bytes = content.toUtf8();
+                    if (output.write(bytes) != bytes.size() || !output.commit()) {
+                        QMessageBox::warning(
+                            &viewer, tr("Save Steam Integration Log"),
+                            tr("Could not finish saving the .log file:\n%1")
+                                .arg(output.errorString()));
+                        return;
+                    }
+                    QMessageBox::information(
+                        &viewer, tr("Steam Integration Log"),
+                        tr("Saved log to:\n%1").arg(destination));
+                });
+        connect(close_button, &QPushButton::clicked, &viewer, &QDialog::accept);
+        viewer.exec();
     });
     steam_menu->addSeparator();
     add_steam_action(tr("Clear all roms from Steam"), QStringLiteral("clear"));
