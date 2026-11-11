@@ -594,15 +594,36 @@ def choose_artwork_match(appid: int, game_id: int) -> None:
     key = art.token()
     if not key:
         abort("Set the SteamGridDB API key in Lichii first")
-    art.set_game_match(appid, title, game_id, key)
+    user, shortcuts, _cloud, _namespaces = discover_steam()
+    _, entries, _, _ = read_shortcuts(shortcuts.read_bytes())
+    title_id = next((art.title_id_from_rom(get_path(entry))
+                     for entry in entries
+                     if owned(entry) and isinstance(entry["appid"], int)
+                     and (entry["appid"] & 0xffffffff) == appid), None)
+    art.set_game_match(appid, title, game_id, key, title_id=title_id)
 
 
 def scrape_apps(user: Path, apps: list[tuple[int, str]], args) -> None:
     if args.no_artwork:
         print("Artwork skipped (--no-artwork).")
         return
-    get_artwork_module().apply_artwork(
-        user / "config/grid", apps, dry_run=args.dry_run)
+    art = get_artwork_module()
+    title_ids = {}
+    shortcuts = user / "config/shortcuts.vdf"
+    if shortcuts.is_file():
+        _, entries, _, _ = read_shortcuts(shortcuts.read_bytes())
+        needed = {appid for appid, _ in apps}
+        for entry in entries:
+            if not owned(entry) or not isinstance(entry["appid"], int):
+                continue
+            appid = entry["appid"] & 0xffffffff
+            if appid not in needed:
+                continue
+            title_id = art.title_id_from_rom(get_path(entry))
+            if title_id is not None:
+                title_ids[appid] = title_id
+    art.apply_artwork(user / "config/grid", apps, dry_run=args.dry_run,
+                      title_ids=title_ids)
     if not args.dry_run and apps:
         set_shortcut_icons(user, allowed_appids={appid for appid, _ in apps})
 
