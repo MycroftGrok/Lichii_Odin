@@ -136,8 +136,26 @@ class SteamIntegrationTests(unittest.TestCase):
         extra.mkdir()
         config = steam.PROFILES[0]
         config.parent.mkdir(parents=True)
-        config.write_text("[UI]\ngamedirs\\1\\path=" + str(extra) + "\n")
+        config.write_text("[Paths]\ngamedirs\\1\\path=" + str(extra) + "\n")
         self.assertIn(extra.resolve(), steam.scan_roots([]))
+
+    def test_armadaos_paths_gamedirs_and_sibling_switch_folder(self):
+        card = steam.HOME / "AndroidCard" / "roms"
+        switch2 = card / "Switch 2"
+        switch1 = card / "Switch"
+        switch2.mkdir(parents=True)
+        switch1.mkdir()
+        config = steam.PROFILES[0]
+        config.parent.mkdir(parents=True)
+        config.write_text(
+            "[General]\n"
+            "Paths\\gamedirs\\size=4\n"
+            "Paths\\gamedirs\\4\\path=" + str(switch2) + "\n"
+            "Paths\\recentFiles=" + str(switch2 / "Zelda [123456789ABCDEF0].nup") + "\n"
+        )
+        found = steam.scan_roots([])
+        self.assertIn(switch2.resolve(), found)
+        self.assertIn(switch1.resolve(), found)
 
 
 if __name__ == "__main__":
