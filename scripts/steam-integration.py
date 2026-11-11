@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -323,6 +324,27 @@ def atomic_write(path: Path, content: bytes):
         tmp.unlink(missing_ok=True)
 
 
+def get_artwork_module():
+    # Load sibling module from source or installed tools, including unit-test imports.
+    helper = Path(__file__).with_name("steam_artwork.py")
+    if not helper.is_file():
+        abort(f"Artwork module not installed: {helper}. Re-run install-launcher.sh.")
+    spec = importlib.util.spec_from_file_location("lichii_steam_artwork", helper)
+    if spec is None or spec.loader is None:
+        abort(f"Cannot load artwork module: {helper}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def scrape_apps(user: Path, apps: list[tuple[int, str]], args) -> None:
+    if args.no_artwork:
+        print("Artwork skipped (--no-artwork).")
+        return
+    get_artwork_module().apply_artwork(
+        user / "config/grid", apps, dry_run=args.dry_run)
+
+
 def do_import(args):
     if steam_running():
         abort("Quit Steam completely before using Steam Integration. "
@@ -347,6 +369,16 @@ def do_import(args):
         members[group] = set(row[1].get("added", [])) if row else set()
     new_entries, assignments = [], {"Switch": set(), "Switch 2": set()}
     additions = skipped = matches = 0
+    artwork_apps = []
+    if args.mode == "artwork":
+        for entry in owners:
+            if isinstance(entry["appid"], int):
+                artwork_apps.append((entry["appid"] & 0xffffffff, str(entry["name"])))
+        if not artwork_apps:
+            print("No Lichii-managed Steam shortcuts found for artwork.")
+            return
+        scrape_apps(user, artwork_apps, args)
+        return
     if args.mode == "clear":
         remove_ids = {e["appid"] & 0xffffffff for e in owners if isinstance(e["appid"], int)}
         if not remove_ids:
@@ -418,6 +450,7 @@ def do_import(args):
                 additions += 1
                 print(f"ADD {group}: {name} (fullscreen)")
             assignments[group].add(appid)
+            artwork_apps.append((appid, str(existing["name"]) if existing else name))
         if not new_entries and not any(assignments.values()):
             print(f"No changes. Skipped/unclassified: {skipped}")
             return
@@ -431,10 +464,14 @@ def do_import(args):
         print(f"New shortcuts: {additions}; existing ROM matches: {matches}; "
               f"skipped: {skipped}; updated collections: {updated}")
     if binary == original_vdf and (collection_changes if args.mode == "clear" else updated) == 0:
-        print("Already synchronized. No Steam files changed.")
+        print("Steam shortcuts and collections already synchronized.")
+        if args.mode != "clear":
+            scrape_apps(user, artwork_apps, args)
         return
     if args.dry_run:
         print("DRY RUN: No Steam files changed.")
+        if args.mode != "clear":
+            scrape_apps(user, artwork_apps, args)
         return
     # Sync the Steam cloud namespace version to the one used by the changed collections.
     for row in ns:
@@ -466,17 +503,26 @@ def do_import(args):
     print("SUCCESS: Steam shortcuts and collections updated.")
     print("Restart Steam to see the changes. If Steam cloud restores older collections, "
           "restore the backed-up files and report this to the project.")
+    if args.mode != "clear":
+        scrape_apps(user, artwork_apps, args)
 
 
 def main():
     p = argparse.ArgumentParser(description="Lichii Steam Integration: Switch and Switch 2")
-    p.add_argument("--mode", choices=["switch", "switch2", "all", "clear"], default="all")
+    p.add_argument("--mode", choices=["switch", "switch2", "all", "clear", "artwork"], default="all")
     p.add_argument("--rom-root", action="append", default=[],
                    help="Extra ROM folder to scan (repeatable)")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--yes", action="store_true", help="Confirm clear (use with caution)")
+    p.add_argument("--no-artwork", action="store_true",
+                   help="Skip optional SteamGridDB artwork scraping")
+    p.add_argument("--configure-artwork", action="store_true",
+                   help="Store your SteamGridDB API key locally, without importing games")
     args = p.parse_args()
     try:
+        if args.configure_artwork:
+            get_artwork_module().configure_key()
+            return
         do_import(args)
     except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
