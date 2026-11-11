@@ -38,6 +38,53 @@ This preserves the active executable and installs shortcuts for the existing Way
 
 The isolated [Odin ARM64 GitHub Actions workflow](https://github.com/MycroftGrok/Lichii_Odin/actions/workflows/odin-armadaos-aarch64.yml) builds on native Ubuntu ARM64 and publishes a `.tar.gz`, `.AppImage` and `SHA256SUMS` as an **experimental prerelease** whenever build-related changes land on `odin-armadaos` (or when manually dispatched). It does not update the user's device automatically. A CI compile is not a replacement for on-device NCE/Vulkan/controller testing.
 
+
+## Steam Integration — Switch / Switch 2 collections
+
+The Odin fork includes a **Steam** menu (in builds that include this feature) with four commands:
+
+- **Import Switch roms to Steam**
+- **Import Switch 2 roms to Steam**
+- **Import all roms to Steam**
+- **Clear all roms from Steam**
+
+The Games application menu also has a separate **Steam Integration** shortcut that runs **Import all roms to Steam**.
+
+### One-paste shortcut setup for an existing Odin installation
+
+Open Konsole in ArmadaOS:
+
+```bash
+cd "$HOME/Applications/Lichii/source" && git pull odin-fork odin-armadaos && bash scripts/install-launcher.sh
+```
+
+This adds **Steam Integration** to the KDE **Games** menu, installs the safe ROM launcher, and keeps the existing verified emulator binary unchanged. **Adding the native Steam menu inside Lichii requires rebuilding the Lichii application**; the menu will not appear in older executable builds.
+
+The Steam helper discovers libraries from the Lichii `gamedirs` setting and common `Games/Switch`, `Games/Switch 2` and `Applications/Lichii/roms` folders. Add other locations explicitly:
+
+```bash
+python3 "$HOME/.local/share/lichii/tools/steam-integration.py" --mode all --rom-root "$HOME/My ROMs"
+```
+
+### How it works
+
+Steam **must be fully closed** before importing or clearing games. Steam overwrites its shortcuts while running. The helper reads existing Steam `shortcuts.vdf` entries and the newer collection data from `cloud-storage-namespace-1.json`, backs up the original Steam metadata, then modifies only what is necessary. Collections are named exactly **Switch** and **Switch 2**. If those collections already exist, they are reused.
+
+Each imported title is a separate non-Steam shortcut pointing to the Lichii game wrapper; it starts **native Wayland Lichii with `-f -g "<ROM path>"`**, so fullscreen is requested and Lichii's existing per-game configuration remains intact. Steam's Proton compatibility override should remain off for this native launcher.
+
+Switch 1 and Switch 2 formats can overlap (`.nsp` and `.xci` do not identify a generation). The **Import all** action classifies games by the names of folders such as `Switch` and `Switch 2`; `.nup` is recognized as Switch 2. Unclassified games are **reported and skipped**, rather than incorrectly assigned. A generation-specific menu action assigns ambiguous games to the requested platform, but skips files clearly labeled as the other platform. Supported extensions include `.nsp`, `.xci`, `.nsz`, `.xcz`, `.nup` and `.nro`.
+
+Repeated imports are **idempotent**: existing ROM paths are reused and games already in the correct collection are not duplicated. **Clear all roms from Steam** removes only entries created by this Lichii integration and removes their memberships; it preserves ROM files, emulator saves and settings, third-party Steam shortcuts and unrelated collections. Steam-metadata backups are stored under `~/.local/share/lichii/steam-integration-backups/`.
+
+For a read-only preview, run:
+
+```bash
+python3 "$HOME/.local/share/lichii/tools/steam-integration.py" --mode all --dry-run
+```
+
+The helper currently requires one identifiable Steam installation and one local signed-in Steam account, with Steam's modern cloudstorage collections files initialized. For multiple Steam profiles or an unrecognized format, it **stops without modifying Steam files**. Steam Flatpak permissions and Steam's cloud collection reconciliation must be tested on the target device; an offline test is not proof the live Steam UI will accept the edits. Backups are produced before modifications, so issues can be rolled back.
+
+
 ## What this fork addresses
 
 The initial ARM64 native-code execution (NCE) release crashed on `MRS CNTPCT_EL0`. The locally-tested branch adds timer handling for runtime NRO code, fixes the two-pass NSO loader so RomFS/ExeFS patches are visible to the first NCE scanning pass, and includes necessary GCC 16 build compatibility fixes. With the correct driver, the Odin 3 Ultra has launched Ocarina of Time at an observed 60 FPS. This is a single-device, single-game observation, not a performance guarantee.
