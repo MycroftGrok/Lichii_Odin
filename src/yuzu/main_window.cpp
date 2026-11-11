@@ -551,7 +551,7 @@ MainWindow::MainWindow(bool has_broken_vulkan)
                             }
                             const QByteArray line = pending_stdout->left(newline).trimmed();
                             pending_stdout->remove(0, newline + 1);
-                            constexpr auto prefix = "LICHII_PROGRESS ";
+                            constexpr char prefix[] = "LICHII_PROGRESS ";
                             if (!line.startsWith(prefix) || !progress_window) {
                                 continue;
                             }
