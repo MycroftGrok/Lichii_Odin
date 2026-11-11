@@ -68,7 +68,9 @@ This adds **Steam Integration** to the KDE **Games** menu, installs the safe ROM
 
 Artwork scraping likewise processes only previously imported, Lichii-managed playable ROM entries that still reside in the currently configured Lichii game library. ROMs outside that library, including DLC/update packages, receive no scraping request. Already-imported Steam shortcuts are not silently removed when their source folder is removed from Lichii; the separate **Clear all roms from Steam** action still requires explicit confirmation.
 
-### Steam Integration log viewer
+### Steam Integration progress and log viewer
+
+**Steam menu imports, Clear all roms from Steam, and Scrape missing Steam artwork** open a compact progress window rather than a long text-results popup. During imports it shows actual ROM-count progress; clearing shows the count of Lichii-owned shortcuts processed; artwork scraping shows actual per-game progress (plus the current game). Short stages such as Steam metadata writes show a busy indicator, not a fabricated percentage. When an action finishes, the same window shows success/failure with **View log** and **Close** buttons. Detailed output stays in the log, including individual missing-artwork reasons. No operation is canceled when a dialog is dismissed; the dialog does not offer unsafe cancellation during Steam metadata writes. The existing Steam-shutdown consent and Clear confirmation remain in place.
 
 **Steam → View latest log...** opens a scrollable, read-only window showing the **latest completed Steam Integration operation**. It has **Copy to clipboard** (the entire log) and **Save as .log...** (a standard Save As dialog; writes only to the selected file). The source log is never changed by the viewer.
 
