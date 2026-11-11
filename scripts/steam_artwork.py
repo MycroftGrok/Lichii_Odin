@@ -21,6 +21,20 @@ KEY_FILE = Path.home() / ".config/lichii/steamgriddb-api-key"
 MATCH_FILE = Path.home() / ".config/lichii/steamgriddb-artwork-matches.json"
 API = "https://www.steamgriddb.com/api/v2"
 MAX_IMAGE = 15 * 1024 * 1024
+
+# SteamGridDB does not index Nintendo Title IDs. These are verified mappings
+# from a Nintendo game title ID to a distinct SteamGridDB game listing.
+# Only add known, reviewed mappings. Unknown IDs are never guessed.
+KNOWN_TITLE_ID_TO_SGDB = {
+    "0400486024DEC000": 5532594,  # Zelda: Ocarina of Time (Switch 2, 2026)
+}
+
+
+def title_id_from_rom(rom_path: str | Path) -> str | None:
+    """Extract Nintendo's 16-hex title ID only when explicitly present in a ROM name."""
+    stem = Path(rom_path).stem
+    match = re.search(r"(?i)\[([0-9a-f]{16})\]", stem)
+    return match.group(1).upper() if match else None
 ARTWORK_TYPES = (
     ("portrait cover", "grids", "600x900", "p"),
     ("landscape cover", "grids", "920x430,460x215", ""),
@@ -133,7 +147,8 @@ def chosen_game_matches() -> dict:
     return data
 
 
-def set_game_match(appid: int, title: str, game_id: int, key: str) -> None:
+def set_game_match(appid: int, title: str, game_id: int, key: str,
+                   title_id: str | None = None) -> None:
     """Persist a user-selected candidate, after validating an exact match."""
     if not 0 < appid < (1 << 32) or game_id <= 0:
         raise ValueError("Invalid Steam shortcut or SteamGridDB ID")
@@ -142,6 +157,8 @@ def set_game_match(appid: int, title: str, game_id: int, key: str) -> None:
         raise ValueError("Selected SteamGridDB game is not an exact title match")
     selected = chosen_game_matches()
     selected[str(appid)] = {"game_id": game_id, "title": title}
+    if title_id is not None and re.fullmatch(r"[0-9A-F]{16}", title_id):
+        selected["title-id:" + title_id] = {"game_id": game_id, "title": title}
     if MATCH_FILE.parent.is_symlink():
         raise ValueError("Refusing symlink for Lichii configuration folder")
     MATCH_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -163,17 +180,29 @@ def set_game_match(appid: int, title: str, game_id: int, key: str) -> None:
     print(f"Saved SteamGridDB artwork match: {title} -> game ID {game_id}")
 
 
-def lookup_game_id(title: str, key: str, appid: int | None = None) -> int | None:
+def lookup_game_id(title: str, key: str, appid: int | None = None,
+                   title_id: str | None = None) -> int | None:
     matches = exact_game_matches(title, key)
     if not matches:
         print(f"  No exact SteamGridDB match: {title}")
         return None
+    valid_ids = {row["id"] for row in matches}
+    if title_id is not None and re.fullmatch(r"[0-9A-F]{16}", title_id):
+        verified = KNOWN_TITLE_ID_TO_SGDB.get(title_id)
+        if verified in valid_ids:
+            print(f"  Nintendo Title ID {title_id}: verified SteamGridDB game {verified}")
+            return verified
+        choice = chosen_game_matches().get("title-id:" + title_id)
+        if (isinstance(choice, dict) and choice.get("game_id") in valid_ids and
+                normalized(str(choice.get("title", ""))) == normalized(title)):
+            print(f"  Nintendo Title ID {title_id}: saved game {choice['game_id']}")
+            return choice["game_id"]
     if len(matches) == 1:
         return matches[0]["id"]
     if appid is not None:
         preferred = chosen_game_matches().get(str(appid))
         if (isinstance(preferred, dict) and preferred.get("title") == title and
-                preferred.get("game_id") in {row["id"] for row in matches}):
+                preferred.get("game_id") in valid_ids):
             print(f"  Using saved SteamGridDB match ID {preferred['game_id']}")
             return preferred["game_id"]
     print(f"  Ambiguous SteamGridDB matches ({len(matches)}): {title}")
@@ -236,14 +265,15 @@ def save_art(grid_dir: Path, filename: str, data: bytes) -> None:
         temp.unlink(missing_ok=True)
 
 
-def scrape_one(grid_dir: Path, appid: int, title: str, key: str) -> tuple[int, int]:
+def scrape_one(grid_dir: Path, appid: int, title: str, key: str,
+               title_id: str | None = None) -> tuple[int, int]:
     missing = [(label, endpoint, dims, suffix)
                for label, endpoint, dims, suffix in ARTWORK_TYPES
                if not existing_art(grid_dir, appid, suffix)]
     if not missing:
         return 0, 0
     query = search_title(title)
-    game_id = lookup_game_id(query, key, appid=appid)
+    game_id = lookup_game_id(query, key, appid=appid, title_id=title_id)
     if game_id is None:
         return 0, len(missing)
     installed = 0
@@ -275,7 +305,8 @@ def scrape_one(grid_dir: Path, appid: int, title: str, key: str) -> tuple[int, i
     return installed, len(missing) - installed
 
 
-def apply_artwork(grid_dir: Path, apps: list[tuple[int, str]], *, dry_run=False) -> None:
+def apply_artwork(grid_dir: Path, apps: list[tuple[int, str]], *, dry_run=False,
+                  title_ids: dict[int, str] | None = None) -> None:
     if not apps:
         return
     key = token()
@@ -297,7 +328,8 @@ def apply_artwork(grid_dir: Path, apps: list[tuple[int, str]], *, dry_run=False)
             grid_dir.mkdir(parents=True, exist_ok=True)
         print(f"ARTWORK: {title}")
         try:
-            got, skipped = scrape_one(grid_dir, appid, title, key)
+            got, skipped = scrape_one(grid_dir, appid, title, key,
+                                      title_id=(title_ids or {}).get(appid))
             total += got
             missing += skipped
         except (RuntimeError, ValueError, OSError) as exc:
