@@ -306,7 +306,8 @@ def scrape_one(grid_dir: Path, appid: int, title: str, key: str,
 
 
 def apply_artwork(grid_dir: Path, apps: list[tuple[int, str]], *, dry_run=False,
-                  title_ids: dict[int, str] | None = None) -> None:
+                  title_ids: dict[int, str] | None = None,
+                  progress=None) -> None:
     if not apps:
         return
     key = token()
@@ -317,12 +318,17 @@ def apply_artwork(grid_dir: Path, apps: list[tuple[int, str]], *, dry_run=False,
         return
     printed = set()
     total, missing = 0, 0
-    for appid, title in apps:
-        if appid in printed:
-            continue
+    unique_apps = list(dict(apps).items())
+    # The GUI gets a real per-game progress count, not a simulated timer.
+    # Duplicated Steam IDs only count once and never generate extra API calls.
+    for number, (appid, title) in enumerate(unique_apps, 1):
         printed.add(appid)
+        if progress is not None:
+            progress(number - 1, len(unique_apps), title)
         if dry_run:
             print(f"ARTWORK PREVIEW: {title} [Steam ID {appid}]")
+            if progress is not None:
+                progress(number, len(unique_apps), title)
             continue
         if not grid_dir.exists() and len(printed) == 1:
             grid_dir.mkdir(parents=True, exist_ok=True)
@@ -335,6 +341,9 @@ def apply_artwork(grid_dir: Path, apps: list[tuple[int, str]], *, dry_run=False,
         except (RuntimeError, ValueError, OSError) as exc:
             print(f"  skipped: {exc}")
             missing += 5
+        finally:
+            if progress is not None:
+                progress(number, len(unique_apps), title)
     print(f"Artwork summary: {total} installed; {missing} missing/unmatched assets.")
 
 
