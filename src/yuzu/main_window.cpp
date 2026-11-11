@@ -111,6 +111,8 @@
 #include <unistd.h>
 #endif
 #include <QProgressDialog>
+#include <QProgressBar>
+#include <QPointer>
 #include <QScreen>
 #include <QShortcut>
 #include <QStatusBar>
@@ -426,7 +428,10 @@ MainWindow::MainWindow(bool has_broken_vulkan)
     // The helper checks Steam and requests shutdown only after explicit user confirmation.
     auto* steam_menu = new QMenu(tr("Steam"), this);
     ui->menubar->insertMenu(ui->menu_Help->menuAction(), steam_menu);
-    const auto add_steam_action = [this, steam_menu](const QString& title,
+    // Created now so completion dialogs can open the viewer without a long
+    // output popup. The action is inserted later in its usual menu position.
+    auto* view_latest_log = new QAction(tr("View latest log..."), steam_menu);
+    const auto add_steam_action = [this, steam_menu, view_latest_log](const QString& title,
                                                      const QString& mode) {
         auto* action = steam_menu->addAction(title);
         connect(action, &QAction::triggered, this, [this, mode]() {
@@ -493,29 +498,140 @@ MainWindow::MainWindow(bool has_broken_vulkan)
                         .arg(QString::fromUtf8(status_probe.readAll()).trimmed()));
                 return;
             }
+            // The helper records complete output to Steam > View latest log.
+            // Keep this window compact and display only structured progress.
+            // Avoid a Cancel action: killing the helper during multi-file Steam
+            // metadata writes could leave partial collection updates.
+            auto* dialog = new QDialog(this);
+            dialog->setWindowTitle(tr("Steam Integration progress"));
+            dialog->setAttribute(Qt::WA_DeleteOnClose);
+            dialog->setWindowModality(Qt::WindowModal);
+            dialog->setWindowFlags(dialog->windowFlags() & ~Qt::WindowCloseButtonHint);
+            dialog->resize(580, 195);
+            auto* layout = new QVBoxLayout(dialog);
+            auto* phase_label = new QLabel(tr("Preparing Steam Integration..."), dialog);
+            phase_label->setTextFormat(Qt::PlainText);
+            layout->addWidget(phase_label);
+            auto* bar = new QProgressBar(dialog);
+            bar->setRange(0, 0);
+            layout->addWidget(bar);
+            auto* detail_label = new QLabel(
+                tr("Full details are available in Steam > View latest log."), dialog);
+            detail_label->setTextFormat(Qt::PlainText);
+            detail_label->setWordWrap(true);
+            layout->addWidget(detail_label);
+            auto* button_row = new QHBoxLayout();
+            auto* log_button = new QPushButton(tr("View log"), dialog);
+            auto* close_button = new QPushButton(tr("Close"), dialog);
+            log_button->setEnabled(false);
+            close_button->setEnabled(false);
+            button_row->addStretch();
+            button_row->addWidget(log_button);
+            button_row->addWidget(close_button);
+            layout->addLayout(button_row);
+            connect(close_button, &QPushButton::clicked, dialog, &QDialog::accept);
+            connect(log_button, &QPushButton::clicked, dialog,
+                    [dialog, view_latest_log]() {
+                        dialog->accept();
+                        view_latest_log->trigger();
+                    });
+
+            QPointer<QDialog> progress_window(dialog);
             auto* process = new QProcess(this);
-            process->setProcessChannelMode(QProcess::MergedChannels);
-            connect(process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-                    this, [this, process](int code, QProcess::ExitStatus status) {
-                        const QString output = QString::fromUtf8(process->readAll()).trimmed();
-                        const QString report = output.isEmpty()
-                                                   ? tr("Steam Integration finished without output.")
-                                                   : output.right(12000);
-                        if (status == QProcess::NormalExit && code == 0) {
-                            QMessageBox::information(this, tr("Steam Integration"), report);
-                        } else {
-                            QMessageBox::warning(this, tr("Steam Integration"), report);
+            process->setProcessChannelMode(QProcess::SeparateChannels);
+            auto pending_stdout = std::make_shared<QByteArray>();
+            connect(process, &QProcess::readyReadStandardOutput, this,
+                    [process, progress_window, pending_stdout, bar, phase_label,
+                     detail_label]() {
+                        pending_stdout->append(process->readAllStandardOutput());
+                        while (true) {
+                            const qsizetype newline = pending_stdout->indexOf('\n');
+                            if (newline < 0) {
+                                break;
+                            }
+                            const QByteArray line = pending_stdout->left(newline).trimmed();
+                            pending_stdout->remove(0, newline + 1);
+                            constexpr auto prefix = "LICHII_PROGRESS ";
+                            if (!line.startsWith(prefix) || !progress_window) {
+                                continue;
+                            }
+                            const QJsonDocument json = QJsonDocument::fromJson(
+                                line.mid(sizeof(prefix) - 1));
+                            if (!json.isObject()) {
+                                continue;
+                            }
+                            const QJsonObject data = json.object();
+                            const QString stage =
+                                data.value(QStringLiteral("stage")).toString();
+                            const QString detail =
+                                data.value(QStringLiteral("detail")).toString();
+                            const int current =
+                                data.value(QStringLiteral("current")).toInt();
+                            const int total =
+                                data.value(QStringLiteral("total")).toInt();
+                            if (stage.isEmpty()) {
+                                continue;
+                            }
+                            phase_label->setText(stage);
+                            if (total > 0 && total <= 1000000) {
+                                bar->setRange(0, total);
+                                bar->setValue(qBound(0, current, total));
+                                detail_label->setText(
+                                    QStringLiteral("%1 / %2%3")
+                                        .arg(qBound(0, current, total))
+                                        .arg(total)
+                                        .arg(detail.isEmpty() ? QString() :
+                                             QStringLiteral(" - ") + detail));
+                            } else {
+                                bar->setRange(0, 0);
+                                detail_label->setText(
+                                    detail.isEmpty()
+                                        ? QStringLiteral("Working...")
+                                        : detail);
+                            }
                         }
+                        if (pending_stdout->size() > 65536) {
+                            pending_stdout->clear();
+                        }
+                    });
+            // Drain stderr so the helper cannot block on a full process pipe.
+            // It is already included in the automatically saved Python log.
+            connect(process, &QProcess::readyReadStandardError, process,
+                    [process]() { process->readAllStandardError(); });
+            const auto finish = [steam_menu, progress_window, bar, phase_label,
+                                 detail_label, log_button, close_button](
+                                    bool success, const QString& failure) {
+                steam_menu->setEnabled(true);
+                if (!progress_window) {
+                    return;
+                }
+                bar->setRange(0, 1);
+                bar->setValue(success ? 1 : 0);
+                phase_label->setText(
+                    success ? QStringLiteral("Steam Integration finished")
+                            : QStringLiteral("Steam Integration failed"));
+                detail_label->setText(
+                    success ? QStringLiteral("Completed. Open the log for details.")
+                            : failure.isEmpty()
+                                  ? QStringLiteral("Open the log for error details.")
+                                  : failure);
+                log_button->setEnabled(true);
+                close_button->setEnabled(true);
+            };
+            connect(process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                    this, [process, finish](int exit_code, QProcess::ExitStatus exit_status) {
+                        finish(exit_status == QProcess::NormalExit && exit_code == 0, {});
                         process->deleteLater();
                     });
             connect(process, &QProcess::errorOccurred, this,
-                    [this, process](QProcess::ProcessError failure) {
+                    [process, finish](QProcess::ProcessError failure) {
                         if (failure == QProcess::FailedToStart) {
-                            QMessageBox::warning(this, tr("Steam Integration"),
-                                                 tr("Could not launch Python 3 Steam helper."));
+                            finish(false, QStringLiteral("Could not launch the Steam helper."));
                             process->deleteLater();
                         }
                     });
+            steam_menu->setEnabled(false);
+            dialog->show();
             QStringList args{helper, QStringLiteral("--mode"), mode};
             if (mode == QStringLiteral("clear")) {
                 args << QStringLiteral("--yes");
@@ -687,7 +803,7 @@ MainWindow::MainWindow(bool has_broken_vulkan)
         }
     });
     steam_menu->addSeparator();
-    auto* view_latest_log = steam_menu->addAction(tr("View latest log..."));
+    steam_menu->addAction(view_latest_log);
     connect(view_latest_log, &QAction::triggered, this, [this]() {
         const QString log_path = QDir::homePath() +
                                  QStringLiteral("/.local/share/lichii/logs/"
