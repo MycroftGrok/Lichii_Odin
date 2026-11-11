@@ -88,10 +88,16 @@
 #include <QFutureWatcher>
 #include <QGuiApplication>
 #include <QInputDialog>
+#include <QLineEdit>
 #include <QMimeData>
 #include <QPalette>
 #include <QProcess>
 #include <QMenu>
+#ifdef __linux__
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 #include <QProgressDialog>
 #include <QScreen>
 #include <QShortcut>
@@ -466,6 +472,52 @@ MainWindow::MainWindow(bool has_broken_vulkan)
     add_steam_action(tr("Import Switch roms to Steam"), QStringLiteral("switch"));
     add_steam_action(tr("Import Switch 2 roms to Steam"), QStringLiteral("switch2"));
     add_steam_action(tr("Import all roms to Steam"), QStringLiteral("all"));
+    steam_menu->addSeparator();
+    add_steam_action(tr("Scrape missing Steam artwork"), QStringLiteral("artwork"));
+    auto* configure_artwork = steam_menu->addAction(tr("Configure SteamGridDB API key..."));
+    connect(configure_artwork, &QAction::triggered, this, [this]() {
+        bool accepted = false;
+        const QString api_key = QInputDialog::getText(
+            this, tr("SteamGridDB artwork"), tr("Paste your personal SteamGridDB API key:"),
+            QLineEdit::Password, QString(), &accepted).trimmed();
+        if (!accepted || api_key.isEmpty()) {
+            return;
+        }
+        if (api_key.size() < 12 || api_key.size() > 1024 || api_key.contains(QChar('\n')) ||
+            api_key.contains(QChar('\r')) || api_key.contains(QChar(' '))) {
+            QMessageBox::warning(this, tr("SteamGridDB artwork"),
+                                 tr("Invalid key format. No changes made."));
+            return;
+        }
+        const QString parent = QDir::homePath() + QStringLiteral("/.config/lichii");
+        if (!QDir().mkpath(parent)) {
+            QMessageBox::warning(this, tr("SteamGridDB artwork"),
+                                 tr("Could not create the local configuration directory."));
+            return;
+        }
+        const QByteArray filepath = (parent + QStringLiteral("/steamgriddb-api-key")).toUtf8();
+        const QByteArray secret = api_key.toUtf8() + '\n';
+        // Open with O_NOFOLLOW and restrict permissions to the current user.
+        int fd = ::open(filepath.constData(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW,
+                        S_IRUSR | S_IWUSR);
+        if (fd < 0) {
+            QMessageBox::warning(this, tr("SteamGridDB artwork"),
+                                 tr("Could not securely open the API key file."));
+            return;
+        }
+        const bool success = ::fchmod(fd, S_IRUSR | S_IWUSR) == 0 &&
+                             ::write(fd, secret.constData(), secret.size()) == secret.size();
+        ::close(fd);
+        if (success) {
+            QMessageBox::information(
+                this, tr("SteamGridDB artwork"),
+                tr("SteamGridDB key saved locally. Import games or select "
+                   "'Scrape missing Steam artwork' to download available artwork."));
+        } else {
+            QMessageBox::warning(this, tr("SteamGridDB artwork"),
+                                 tr("Could not save the API key completely."));
+        }
+    });
     steam_menu->addSeparator();
     add_steam_action(tr("Clear all roms from Steam"), QStringLiteral("clear"));
 #endif
