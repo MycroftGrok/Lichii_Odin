@@ -118,6 +118,39 @@ python3 "$HOME/.local/share/lichii/tools/steam-integration.py" --mode all --dry-
 The helper currently requires one identifiable Steam installation and one local signed-in Steam account, with Steam's modern cloudstorage collections files initialized. For multiple Steam profiles or an unrecognized format, it **stops without modifying Steam files**. Steam Flatpak permissions and Steam's cloud collection reconciliation must be tested on the target device; an offline test is not proof the live Steam UI will accept the edits. Backups are produced before modifications, so issues can be rolled back.
 
 
+### Test the compiled Steam menu safely on an already-working Odin
+
+The **Steam** menu is part of the Qt GUI executable and requires an ARM64 build;
+running the Python helper alone does not add it to an older Lichii binary.
+
+On an Odin 3 Ultra that has the working Fedora toolbox **lichii-debug** and the
+feature checkout **odin-steam-preview**, paste the following into Konsole:
+
+```bash
+cd "$HOME/Applications/Lichii/source" &&
+git pull --ff-only odin-fork feature/steam-integration-switch-collections-20261110 &&
+bash scripts/build-steam-menu-test.sh
+```
+
+This compiles the GUI target in an independent
+`~/Applications/Lichii/build-steam-menu-test/` directory, uses the existing
+toolbox and known-working Wayland/Turnip launch script, and installs a separate
+**Games → Lichii (Steam Menu Test)** entry and desktop shortcut. It **does not
+rebuild, delete, replace, or relink the stable Lichii executable**, and verifies
+the stable executable's SHA-256 did not change.
+
+After a successful build you may launch the test independently using:
+
+```bash
+"$HOME/.local/bin/lichii-steam-menu-test"
+```
+
+Check that the test GUI exposes **Steam → Configure SteamGridDB API key...**,
+then test game loading and the Steam shortcut workflow. Steam must be fully
+closed before the Steam metadata import or artwork scraping actions. **Do not
+promote this experimental build until it works on-device.** If the compiler
+fails, share the exact error output; the stable launcher remains available.
+
 ## What this fork addresses
 
 The initial ARM64 native-code execution (NCE) release crashed on `MRS CNTPCT_EL0`. The locally-tested branch adds timer handling for runtime NRO code, fixes the two-pass NSO loader so RomFS/ExeFS patches are visible to the first NCE scanning pass, and includes necessary GCC 16 build compatibility fixes. With the correct driver, the Odin 3 Ultra has launched Ocarina of Time at an observed 60 FPS. This is a single-device, single-game observation, not a performance guarantee.
