@@ -147,10 +147,25 @@ def owned(entry: dict) -> bool:
 
 
 def get_path(entry: dict) -> str | None:
-    # Simple and strict for the integration's own LaunchOptions.
+    # Recognize our wrapper and pre-existing Lichii shortcuts using -g.
+    # Never guess a ROM from unrelated Steam games.
+    import shlex
     options = entry["options"].strip()
-    if options.startswith('"') and options.endswith('"'):
-        return str(Path(options[1:-1].replace('\\"', '"')).expanduser().resolve())
+    try:
+        args = shlex.split(options)
+    except ValueError:
+        return None
+    possible = None
+    if len(args) == 1:
+        possible = args[0]
+    elif "-g" in args and args.index("-g") + 1 < len(args):
+        possible = args[args.index("-g") + 1]
+    elif "--game" in args and args.index("--game") + 1 < len(args):
+        possible = args[args.index("--game") + 1]
+    if possible:
+        path = Path(possible).expanduser()
+        if path.is_absolute() and path.suffix.casefold() in EXTS:
+            return str(path.resolve())
     return None
 
 
@@ -193,7 +208,7 @@ def scan_roots(extra):
         if not config.is_file():
             continue
         for line in config.read_text(encoding="utf-8-sig", errors="replace").splitlines():
-            found = re.match(r"^\s*game_dirs[\\/]\d+[\\/]path\s*=\s*(.+?)\s*$", line, re.I)
+            found = re.match(r"^\s*gamedirs[\\/]\d+[\\/]path\s*=\s*(.+?)\s*$", line, re.I)
             if found:
                 path = Path(os.path.expandvars(found.group(1).strip('"'))).expanduser()
                 if path.is_dir():
