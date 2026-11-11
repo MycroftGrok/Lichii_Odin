@@ -47,6 +47,14 @@ def abort(message: str):
     raise RuntimeError(message)
 
 
+def report_progress(stage: str, current: int = 0, total: int = 0,
+                    detail: str = "") -> None:
+    """Machine-readable progress for the Qt dialog; also retained in the log."""
+    print("LICHII_PROGRESS " + json.dumps(
+        {"stage": stage, "current": current, "total": total, "detail": detail},
+        ensure_ascii=False), flush=True)
+
+
 class _TeeOutput:
     """Keep normal Konsole output while recording it in the latest run log."""
 
@@ -693,12 +701,16 @@ def scrape_apps(user: Path, apps: list[tuple[int, str]], args) -> None:
             if title_id is not None:
                 title_ids[appid] = title_id
     art.apply_artwork(user / "config/grid", apps, dry_run=args.dry_run,
-                      title_ids=title_ids)
+                      title_ids=title_ids,
+                      progress=lambda current, total, title: report_progress(
+                          "Scraping Steam artwork", current, total, title))
     if not args.dry_run and apps:
+        report_progress("Updating Steam shortcut icons")
         set_shortcut_icons(user, allowed_appids={appid for appid, _ in apps})
 
 
 def do_import(args):
+    report_progress("Checking Steam")
     ensure_steam_closed(args)
     if not (LAUNCHER.is_file() and SCRIPT.is_file()):
         abort("Lichii Steam launcher missing. Run scripts/install-launcher.sh first.")
@@ -722,6 +734,7 @@ def do_import(args):
     additions = skipped = matches = 0
     artwork_apps = []
     if args.mode == "artwork":
+        report_progress("Scanning Lichii game library")
         roots = scan_roots(args.rom_root)
         print("Lichii game folders:", *(f"{p} (recursive={deep})" for p, deep in roots),
               sep="\n  ")
@@ -742,6 +755,7 @@ def do_import(args):
         scrape_apps(user, artwork_apps, args)
         return
     if args.mode == "clear":
+        report_progress("Checking managed Steam shortcuts")
         remove_ids = {e["appid"] & 0xffffffff for e in owners if isinstance(e["appid"], int)}
         if not remove_ids:
             print("No Lichii-managed Steam shortcuts to clear.")
@@ -752,8 +766,12 @@ def do_import(args):
             return
         # Strip ONLY this tool's original entry spans, preserving other entries byte-for-byte.
         trimmed = binary
-        for entry in sorted(owners, key=lambda e: e["start"], reverse=True):
+        ordered_owners = sorted(owners, key=lambda e: e["start"], reverse=True)
+        report_progress("Preparing shortcut removal", 0, len(ordered_owners))
+        for number, entry in enumerate(ordered_owners, 1):
             trimmed = trimmed[:entry["start"]] + trimmed[entry["stop"]:]
+            report_progress("Preparing shortcut removal", number, len(ordered_owners),
+                            str(entry["name"]))
         binary = trimmed
         collection_changes = 0
         version += 1
@@ -766,12 +784,16 @@ def do_import(args):
                     data, collections, doc["name"], remove_ids=ids, version=version))
         print(f"Removed: {len(remove_ids)} managed shortcuts; updated {collection_changes} collections.")
     else:
+        report_progress("Scanning Lichii game library")
         roots = scan_roots(args.rom_root)
         if not roots:
             abort("No accessible Lichii game folders. Add a directory in Lichii first.")
         print("Lichii game folders:", *(f"{p} (recursive={deep})" for p, deep in roots),
               sep="\n  ")
-        for rom in roms_in(roots):
+        roms = roms_in(roots)
+        report_progress("Checking ROMs", 0, len(roms))
+        for number, rom in enumerate(roms, 1):
+            report_progress("Checking ROMs", number, len(roms), rom.name)
             reason = non_game_package_reason(rom)
             if reason:
                 print(f"SKIP {reason}: {rom.name}")
@@ -850,6 +872,7 @@ def do_import(args):
     if binary == original_vdf and output_cloud == original_cloud and output_ns == original_ns:
         print("Already synchronized; nothing changed.")
         return
+    report_progress("Saving Steam shortcuts and collections")
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     target = BACKUPS / stamp
     target.mkdir(parents=True, exist_ok=False)
