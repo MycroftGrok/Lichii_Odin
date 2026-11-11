@@ -55,6 +55,7 @@ STEAM_HELPER="${ROOT}/source/scripts/steam-integration.py"
 [[ -f "$STEAM_HELPER" ]] || { echo "Missing Steam integration helper: $STEAM_HELPER" >&2; exit 1; }
 mkdir -p "$HOME/.local/share/lichii/tools"
 cp -p "$STEAM_HELPER" "$HOME/.local/share/lichii/tools/steam-integration.py"
+cp -p "$ROOT/source/scripts/steam_artwork.py" "$HOME/.local/share/lichii/tools/steam_artwork.py"
 cat > "$HOME/.local/bin/lichii-steam-game" <<'WRAPPER'
 #!/usr/bin/env bash
 set -euo pipefail
