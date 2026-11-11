@@ -62,11 +62,9 @@ cd "$HOME/Applications/Lichii/source" && git pull odin-fork odin-armadaos && bas
 
 This adds **Steam Integration** to the KDE **Games** menu, installs the safe ROM launcher, and keeps the existing verified emulator binary unchanged. **Adding the native Steam menu inside Lichii requires rebuilding the Lichii application**; the menu will not appear in older executable builds.
 
-The Steam helper discovers libraries from the Lichii `gamedirs` setting and common `Games/Switch`, `Games/Switch 2` and `Applications/Lichii/roms` folders. Add other locations explicitly:
+**Strict Lichii library scope:** Imports scan only the folders explicitly added to Lichii's game library (as saved in Lichii's `qt-config.ini` `Paths\gamedirs` entries). The scan respects each folder's **deep scan** setting. It does **not** infer nearby `Switch` or `Switch 2` folders, scan arbitrary `Games` directories, use recent-file history, or read Eden's library list. The old `--rom-root` override is disabled to prevent bypassing this restriction. To import games from another location, first add that exact directory inside Lichii's game library.
 
-```bash
-python3 "$HOME/.local/share/lichii/tools/steam-integration.py" --mode all --rom-root "$HOME/My ROMs"
-```
+Artwork scraping likewise processes only previously imported, Lichii-managed playable ROM entries that still reside in the currently configured Lichii game library. ROMs outside that library, including DLC/update packages, receive no scraping request. Already-imported Steam shortcuts are not silently removed when their source folder is removed from Lichii; the separate **Clear all roms from Steam** action still requires explicit confirmation.
 
 ### Steam artwork scraping (covers, banners, backgrounds, logos, icons)
 
