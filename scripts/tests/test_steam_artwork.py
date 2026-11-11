@@ -73,6 +73,31 @@ class ArtTests(unittest.TestCase):
                 title_id="0100AAAABBBBCCCC"))
             self.assertEqual(art.MATCH_FILE.stat().st_mode & 0o777, 0o600)
 
+    def test_artwork_progress_counts_unique_games(self):
+        steps = []
+        with mock.patch.object(art, "token", return_value="test-key"), \
+             mock.patch.object(art, "scrape_one", return_value=(3, 2)) as scrape:
+            art.apply_artwork(
+                self.grid,
+                [(1, "A"), (1, "A"), (2, "B")],
+                progress=lambda current, total, title: steps.append(
+                    (current, total, title)))
+        self.assertEqual(
+            steps,
+            [(0, 2, "A"), (1, 2, "A"), (1, 2, "B"), (2, 2, "B")])
+        self.assertEqual(scrape.call_count, 2)
+
+    def test_artwork_dry_run_progress_has_no_downloads(self):
+        steps = []
+        with mock.patch.object(art, "token", return_value="test-key"), \
+             mock.patch.object(art, "scrape_one") as scrape:
+            art.apply_artwork(
+                self.grid, [(3, "Example")], dry_run=True,
+                progress=lambda *args: steps.append(args))
+        scrape.assert_not_called()
+        self.assertEqual(steps, [(0, 1, "Example"), (1, 1, "Example")])
+        self.assertFalse(self.grid.exists())
+
     def test_image_files_and_no_overwrite(self):
         def fake_json(path, key):
             if path.startswith("/search/autocomplete/"):
