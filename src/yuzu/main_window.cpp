@@ -112,6 +112,7 @@
 #endif
 #include <QProgressDialog>
 #include <QProgressBar>
+#include <memory>
 #include <QPointer>
 #include <QScreen>
 #include <QShortcut>
