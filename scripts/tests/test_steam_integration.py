@@ -66,6 +66,63 @@ class SteamIntegrationTests(unittest.TestCase):
         steam.do_import(Namespace(mode=mode, rom_root=[], dry_run=False, yes=True,
                                        no_artwork=True, configure_artwork=False))
 
+    def test_steam_process_detection_current_user_ignores_zombies(self):
+        from unittest.mock import patch
+        sample = (
+            " 50 Ss steam\n"
+            " 51 Sl steamwebhelper\n"
+            " 52 Z steam\n"
+            " 53 Ss unrelated\n"
+            " 54 Sl steam-runtime-l\n"
+        )
+        with patch.object(steam.subprocess, "check_output", return_value=sample) as ps:
+            processes = steam.steam_processes()
+        self.assertEqual(processes, [
+            (50, "steam"), (51, "steamwebhelper"), (54, "steam-runtime-l")
+        ])
+        args = ps.call_args.args[0]
+        self.assertEqual(args[:2], ["ps", "-u"])
+        self.assertNotIn("-eo", args)
+
+    def test_active_steam_without_shutdown_consent_aborts(self):
+        from unittest.mock import patch
+        with patch.object(steam, "steam_running", return_value=True), \
+             patch.object(steam, "steam_processes",
+                          return_value=[(123, "steamwebhelper")]):
+            with self.assertRaisesRegex(RuntimeError, "Steam is still active"):
+                steam.ensure_steam_closed(Namespace(shutdown_steam=False))
+
+    def test_shutdown_consent_calls_graceful_shutdown(self):
+        from unittest.mock import patch
+        with patch.object(steam, "steam_running", side_effect=[True, False]), \
+             patch.object(steam, "close_steam_gracefully") as shutdown:
+            steam.ensure_steam_closed(Namespace(shutdown_steam=True))
+            shutdown.assert_called_once_with()
+
+    def test_native_steam_shutdown_success_never_uses_signals(self):
+        from unittest.mock import patch
+        from subprocess import CompletedProcess
+        with patch.object(steam, "steam_processes",
+                          side_effect=[[(123, "steam")], []]), \
+             patch.object(steam.shutil, "which", return_value="/usr/bin/steam"), \
+             patch.object(steam.subprocess, "run",
+                          return_value=CompletedProcess(["steam", "-shutdown"], 0)) as run, \
+             patch.object(steam.os, "kill") as kill:
+            steam.close_steam_gracefully()
+            self.assertEqual(run.call_args.args[0], ["/usr/bin/steam", "-shutdown"])
+            kill.assert_not_called()
+
+    def test_steam_shutdown_without_launcher_uses_sigterm_only(self):
+        from unittest.mock import patch
+        import signal
+        with patch.object(steam, "steam_processes",
+                          side_effect=[[(123, "steamwebhelper")],
+                                       [(123, "steamwebhelper")], []]), \
+             patch.object(steam.shutil, "which", return_value=None), \
+             patch.object(steam.os, "kill") as kill:
+            steam.close_steam_gracefully()
+            kill.assert_called_once_with(123, signal.SIGTERM)
+
     def test_import_deduplicate_and_clear(self):
         self.run_mode("all")
         blob, entries, _, _ = steam.read_shortcuts(self.shortcuts.read_bytes())
