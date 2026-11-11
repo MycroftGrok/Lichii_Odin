@@ -96,8 +96,23 @@ Once the key is configured, **importing ROMs automatically downloads artwork** f
 python3 "$HOME/.local/share/lichii/tools/steam-integration.py" --mode artwork
 ```
 
-**Safety:** The scraper uses exact game-title matches and skips ambiguous or missing results rather than picking the wrong game. It downloads only static PNG/JPEG images and ICO icons from SteamGridDB's HTTPS CDN. It does **not** replace existing or manually customized Steam artwork, and it does not modify ROM contents or emulator saves. If no API key is available, ROM imports still work; only artwork downloads are skipped. Some games may lack certain types of artwork. Steam must be fully closed when importing or scraping.
+**Safety:** The scraper uses exact game-title matches and skips ambiguous or missing results rather than picking the wrong game. It downloads only static PNG/JPEG images and ICO icons from SteamGridDB's HTTPS CDN. It does **not** replace existing or manually customized Steam artwork, and it does not modify ROM contents or emulator saves. If no API key is available, ROM imports still work; only artwork downloads are skipped. Some games may lack certain types of artwork. Steam must be fully closed when importing or scraping. If the client is running in the background, Lichii now identifies the specific Steam processes and offers to request their shutdown **only after you approve**. This can interrupt Steam games or downloads. If Steam will not exit, the helper aborts without modifying Steam metadata; it never uses SIGKILL.
 
+
+To diagnose an apparently closed Steam client without changing anything:
+
+```bash
+python3 "$HOME/.local/share/lichii/tools/steam-integration.py" --check-steam
+```
+
+The check prints the current user's Steam process names and PIDs (exit code 3 means
+Steam processes are still present). Lichii's Steam menu prompts for shutdown if
+it sees any. From Konsole only, you may opt in with
+`--shutdown-steam` on an import or artwork command; the helper first
+tries Steam's normal `-shutdown` command if available, then sends SIGTERM
+only to recognized current-user Steam processes. It rechecks before writing
+Steam metadata, and stops if Steam remains running. Nothing is shut down
+silently, and the integration doesn't restart Steam afterward.
 
 ### How it works
 
