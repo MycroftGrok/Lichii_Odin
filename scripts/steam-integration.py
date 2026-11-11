@@ -50,9 +50,11 @@ def abort(message: str):
 def report_progress(stage: str, current: int = 0, total: int = 0,
                     detail: str = "") -> None:
     """Machine-readable progress for the Qt dialog; also retained in the log."""
-    print("LICHII_PROGRESS " + json.dumps(
+    frame = "LICHII_PROGRESS " + json.dumps(
         {"stage": stage, "current": current, "total": total, "detail": detail},
-        ensure_ascii=False), flush=True)
+        ensure_ascii=False) + "\n"
+    sys.stdout.write(frame)
+    sys.stdout.flush()
 
 
 class _TeeOutput:
@@ -64,8 +66,11 @@ class _TeeOutput:
 
     def write(self, value):
         self.original.write(value)
-        self.logfile.write(value)
-        self.logfile.flush()
+        # The Qt progress protocol is not diagnostic text. Keep the saved
+        # log readable, while delivering progress to the GUI in real time.
+        if not value.startswith("LICHII_PROGRESS "):
+            self.logfile.write(value)
+            self.logfile.flush()
         return len(value)
 
     def flush(self):
