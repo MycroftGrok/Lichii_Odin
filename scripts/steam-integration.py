@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import struct
 import subprocess
@@ -122,7 +123,9 @@ def vint(key: str, value: int) -> bytes:
 def make_shortcut(index: int, appid: int, title: str, rom: Path) -> bytes:
     signed = appid - (1 << 32) if appid >= (1 << 31) else appid
     exe = '"' + str(SCRIPT) + '"'
-    opts = '"' + str(rom).replace('"', '\\"') + '"'
+    # Steam passes LaunchOptions through a shell. Use POSIX single-quote escaping
+    # so dollar signs, backticks and command substitutions in ROM paths stay literal.
+    opts = shlex.quote(str(rom))
     return (b"\x00" + str(index).encode() + b"\0"
             + vint("appid", signed)
             + vstring("AppName", title)
@@ -144,7 +147,7 @@ def make_shortcut(index: int, appid: int, title: str, rom: Path) -> bytes:
 
 def owned(entry: dict) -> bool:
     exe = entry["exe"].strip('"')
-    return exe == str(SCRIPT) and entry["options"].strip().startswith('"')
+    return exe == str(SCRIPT) and get_path(entry) is not None
 
 
 def get_path(entry: dict) -> str | None:
