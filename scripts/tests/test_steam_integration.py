@@ -93,6 +93,21 @@ class SteamIntegrationTests(unittest.TestCase):
         self.assertEqual(groups["Unrelated"]["added"], [1234])
         self.assertTrue(any(steam.BACKUPS.iterdir()))
 
+    def test_fill_blank_steam_icon_only(self):
+        self.run_mode("switch")
+        _, entries, _, _ = steam.read_shortcuts(self.shortcuts.read_bytes())
+        appid = entries[1]["appid"] & 0xffffffff
+        grid = self.shortcuts.parent / "grid"
+        grid.mkdir()
+        icon = grid / f"{appid}_icon.png"
+        icon.write_bytes(b"\x89PNG\r\n\x1a\nFAKE")
+        steam.set_shortcut_icons(self.shortcuts.parent.parent)
+        after = self.shortcuts.read_bytes()
+        self.assertIn(str(icon).encode(), after)
+        self.assertTrue(any(steam.BACKUPS.iterdir()))
+        steam.set_shortcut_icons(self.shortcuts.parent.parent)
+        self.assertEqual(after, self.shortcuts.read_bytes())
+
     def test_mode_switch_only(self):
         self.run_mode("switch")
         _, entries, _, _ = steam.read_shortcuts(self.shortcuts.read_bytes())
