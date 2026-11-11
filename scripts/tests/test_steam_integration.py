@@ -76,6 +76,41 @@ class SteamIntegrationTests(unittest.TestCase):
         steam.do_import(Namespace(mode=mode, rom_root=[], dry_run=False, yes=True,
                                        no_artwork=True, configure_artwork=False))
 
+    def test_progress_json_is_machine_readable_and_handles_rom_names(self):
+        from contextlib import redirect_stdout
+        import io
+        output = io.StringIO()
+        with redirect_stdout(output):
+            steam.report_progress("Checking ROMs", 2, 10, 'A "quoted" ROM.nsp')
+        line = output.getvalue().strip()
+        self.assertTrue(line.startswith("LICHII_PROGRESS "))
+        self.assertEqual(json.loads(line.split(" ", 1)[1]), {
+            "stage": "Checking ROMs",
+            "current": 2,
+            "total": 10,
+            "detail": 'A "quoted" ROM.nsp',
+        })
+
+    def test_import_reports_real_rom_progress(self):
+        from unittest.mock import patch
+        with patch.object(steam, "report_progress") as progress:
+            self.run_mode("all")
+        snapshots = [call.args for call in progress.call_args_list]
+        self.assertIn(("Checking ROMs", 0, 2), snapshots)
+        checked = [(args[1], args[2]) for args in snapshots
+                   if args[0] == "Checking ROMs" and len(args) > 3]
+        self.assertEqual(checked, [(1, 2), (2, 2)])
+
+    def test_clear_reports_real_shortcut_count(self):
+        from unittest.mock import patch
+        self.run_mode("all")
+        with patch.object(steam, "report_progress") as progress:
+            self.run_mode("clear")
+        snapshots = [call.args for call in progress.call_args_list]
+        self.assertIn(("Preparing shortcut removal", 0, 2), snapshots)
+        self.assertTrue(any(args[:3] == ("Preparing shortcut removal", 2, 2)
+                            for args in snapshots))
+
     def test_latest_log_captures_stdout_stderr_and_finished_status(self):
         import sys
         print("Before log")
