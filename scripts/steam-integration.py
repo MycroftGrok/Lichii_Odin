@@ -105,12 +105,14 @@ def record_latest_log(mode: str):
                           datetime.datetime.now().astimezone().isoformat(timespec="seconds"))
             log.flush()
             os.fsync(log.fileno())
-        # Readers always see a complete finished log, never a partial write.
-        if LATEST_LOG.is_symlink():
-            abort("Steam log path became a symbolic link; old log left untouched")
-        os.replace(temp_path, LATEST_LOG)
     finally:
-        temp_path.unlink(missing_ok=True)
+        try:
+            # Publish even when an operation fails, after the stream is closed.
+            # Readers always see a completed run rather than a partial log.
+            if temp_path.is_file() and not LATEST_LOG.is_symlink():
+                os.replace(temp_path, LATEST_LOG)
+        finally:
+            temp_path.unlink(missing_ok=True)
 
 
 def read_cstring(blob: bytes, start: int) -> tuple[str, int]:
