@@ -74,9 +74,9 @@ Type=Application
 Name=Steam Integration
 GenericName=Import Lichii ROMs into Steam
 Comment=Import Switch and Switch 2 ROMs into Steam collections without duplicates
-Exec=/usr/bin/python3 $HOME/.local/share/lichii/tools/steam-integration.py --mode all
+Exec=konsole --hold -e /usr/bin/python3 $HOME/.local/share/lichii/tools/steam-integration.py --mode all
 Icon=steam
-Terminal=true
+Terminal=false
 Categories=Game;Utility;
 Keywords=Steam;Lichii;Switch;Switch2;
 DESKTOP
