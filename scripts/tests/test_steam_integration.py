@@ -296,7 +296,7 @@ class SteamIntegrationTests(unittest.TestCase):
         ))
         self.assertEqual(
             steam.roms_in(steam.scan_roots([])),
-            [nested_rom.resolve(), self.rom2.resolve()],
+            sorted([nested_rom.resolve(), self.rom2.resolve()]),
         )
 
     def test_artwork_scans_only_games_still_in_lichii(self):
