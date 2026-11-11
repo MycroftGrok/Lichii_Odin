@@ -31,15 +31,6 @@ BACKUPS = HOME / ".local/share/lichii/steam-integration-backups"
 PROFILES = [
     HOME / ".config/lichii/qt-config.ini",
     HOME / ".local/share/lichii/config/qt-config.ini",
-    HOME / ".config/eden/qt-config.ini",
-    HOME / ".local/share/eden/config/qt-config.ini",
-]
-ROOTS = [
-    HOME / "Applications/Lichii/roms", HOME / "Applications/Lichii/ROMs",
-    HOME / "Applications/Lichii/games",
-    HOME / "Games/Switch", HOME / "Games/Switch 2", HOME / "Games/Switch2",
-    HOME / "ROMs/Switch", HOME / "ROMs/Switch 2", HOME / "ROMs/Switch2",
-    HOME / "Roms/Switch", HOME / "Roms/Switch 2",
 ]
 STEAM_ROOTS = [
     HOME / ".local/share/Steam",
@@ -298,80 +289,92 @@ def discover_steam():
     return user, shortcuts, collections, namespaces
 
 
-def usable_game_directories(configured: Path) -> set[Path]:
-    """Resolve configured library folders, including ArmadaOS's /media alias.
+def resolve_configured_game_directory(configured: Path) -> Path | None:
+    """Resolve a configured path, including ArmadaOS's old /media alias.
 
-    ArmadaOS mounts removable cards under /run/media/<user>/<label>, while
-    previous Lichii configs can contain /media/<user>/<label>. Never change
-    the config or create mounts; only scan an alias if it really exists.
+    Never infer sibling folders or other ROM roots. Return only the directory
+    Lichii actually has registered and that exists on this device.
     """
     candidates = [configured]
     parts = configured.parts
-    if len(parts) > 2 and parts[0] == "/" and parts[1] == "media":
+    if len(parts) > 2 and parts[:2] == ("/", "media"):
         candidates.append(Path("/run") / configured.relative_to("/"))
     elif len(parts) > 3 and parts[:3] == ("/", "run", "media"):
         candidates.append(Path("/") / Path(*parts[2:]))
-    valid = set()
     for candidate in candidates:
-        if not candidate.is_dir():
-            continue
-        valid.add(candidate.resolve())
-        # A library configured at Switch 2 should also pick up a sibling
-        # Switch 1 directory on the same card (and vice versa).
-        if candidate.name.casefold().replace(" ", "") in ("switch", "switch1", "switch2"):
-            for sibling in ("Switch", "Switch 1", "Switch 2", "Switch2"):
-                other = candidate.parent / sibling
-                if other.is_dir():
-                    valid.add(other.resolve())
-    return valid
+        if candidate.is_dir():
+            return candidate.resolve()
+    return None
 
 
 def scan_roots(extra):
-    roots = {p.resolve() for p in ROOTS if p.is_dir()}
-    # QSettings stores the path under Paths\gamedirs\N\path, not just
-    # gamedirs\N\path. Config files may also use forward slashes.
-    game_dir_pattern = re.compile(
-        r"^\s*(?:Paths[\\/])?gamedirs[\\/]\d+[\\/]path\s*=\s*(.*?)\s*$",
-        re.I,
+    """Return registered Lichii game folders and their deep-scan preferences.
+
+    QSettings persists Paths\gamedirs\N\path and
+    Paths\gamedirs\N\deep_scan. The first existing *Lichii* config is
+    authoritative. Do not pull in Eden, recentFiles, sibling folders, guessed
+    directories, or explicit filesystem paths not registered in Lichii.
+    """
+    if extra:
+        abort("--rom-root is disabled: add that directory to Lichii's game library "
+              "first, then retry Steam Integration.")
+    config = next((p for p in PROFILES if p.is_file()), None)
+    if config is None:
+        abort("No Lichii qt-config.ini found. Add a game folder inside Lichii first.")
+    game_pattern = re.compile(
+        r"^\s*(?:Paths[\\/])?gamedirs[\\/](\d+)[\\/]"
+        r"(path|deep_scan|deep_scan[\\/]default)\s*=\s*(.*?)\s*$", re.I,
     )
-    recent_files_pattern = re.compile(
-        r"^\s*(?:Paths[\\/])?recentFiles\s*=\s*(.*?)\s*$",
-        re.I,
-    )
-    for config in PROFILES:
-        if not config.is_file():
+    configured = {}
+    for line in config.read_text(encoding="utf-8-sig", errors="replace").splitlines():
+        match = game_pattern.match(line)
+        if match is None:
             continue
-        for line in config.read_text(encoding="utf-8-sig", errors="replace").splitlines():
-            found = game_dir_pattern.match(line)
-            if found:
-                raw = found.group(1).strip().strip('"')
-                if raw and raw not in ("SDMC", "UserNAND", "SysNAND"):
-                    path = Path(os.path.expandvars(raw)).expanduser()
-                    roots.update(usable_game_directories(path))
-            else:
-                recent = recent_files_pattern.match(line)
-                if recent:
-                    for raw in recent.group(1).split(","):
-                        path = Path(os.path.expandvars(raw.strip().strip('"'))).expanduser()
-                        if path.suffix.casefold() in EXTS:
-                            roots.update(usable_game_directories(path.parent))
-    for arg in extra:
-        path = Path(arg).expanduser()
-        directories = usable_game_directories(path)
-        if not directories:
-            abort(f"ROM directory not found: {path}")
-        roots.update(directories)
-    return sorted(roots)
+        index, key, raw = match.groups()
+        configured.setdefault(int(index), {})[key.casefold().replace("/", "\\")] = raw.strip()
+    roots = {}
+    for item in configured.values():
+        raw = item.get("path", "").strip('"')
+        if not raw or raw.casefold() in ("sdmc", "usernand", "sysnand"):
+            continue
+        candidate = Path(os.path.expandvars(raw)).expanduser()
+        path = resolve_configured_game_directory(candidate)
+        if path is None:
+            print(f"SKIP unavailable Lichii folder: {raw}")
+            continue
+        deep_raw = item.get("deep_scan", item.get("deep_scan\\default", "false"))
+        deep = deep_raw.casefold() in ("true", "1", "yes", "on")
+        # If configured more than once, use the union of what the actual
+        # Lichii folder entries permit, without adding unregistered paths.
+        roots[path] = roots.get(path, False) or deep
+    if not roots:
+        abort("No accessible ROM directories registered in Lichii. "
+              "Add the desired folder in Lichii's game library.")
+    return sorted(roots.items(), key=lambda item: str(item[0]))
+
 
 def roms_in(roots):
+    """Find files Lichii can see within its configured scan boundaries."""
     roms = {}
-    for root in roots:
-        for base, directories, filenames in os.walk(root, followlinks=False):
-            directories[:] = [d for d in directories if not d.startswith(".")]
-            for filename in filenames:
-                path = Path(base) / filename
-                if path.suffix.casefold() in EXTS and path.is_file():
-                    roms[str(path.resolve())] = path.resolve()
+    for root, deep_scan in roots:
+        if not root.is_dir():
+            continue
+        paths = []
+        if deep_scan:
+            for base, directories, filenames in os.walk(root, followlinks=False):
+                directories[:] = [d for d in directories if not d.startswith(".")]
+                paths.extend(Path(base) / name for name in filenames)
+        else:
+            paths = [p for p in root.iterdir() if p.is_file()]
+        for path in paths:
+            if path.suffix.casefold() not in EXTS or not path.is_file():
+                continue
+            resolved = path.resolve()
+            # Symlink files pointing outside the registered root do not expand
+            # the Lichii library's allowed directory boundary.
+            if not resolved.is_relative_to(root):
+                continue
+            roms[str(resolved)] = resolved
     return [roms[key] for key in sorted(roms)]
 
 
@@ -504,7 +507,7 @@ def get_artwork_module():
     return module
 
 
-def set_shortcut_icons(user: Path) -> None:
+def set_shortcut_icons(user: Path, allowed_appids: set[int] | None = None) -> None:
     """Fill blank icon fields only on Lichii-owned shortcuts, from downloaded icon art.
 
     Writing <appid>_icon.png to Steam's grid folder may not be enough to set the
@@ -521,6 +524,8 @@ def set_shortcut_icons(user: Path) -> None:
         if not owned(entry) or not isinstance(entry["appid"], int):
             continue
         appid = entry["appid"] & 0xffffffff
+        if allowed_appids is not None and appid not in allowed_appids:
+            continue
         icon = next((grid / f"{appid}_icon{ext}" for ext in (".png", ".ico", ".jpg")
                      if (grid / f"{appid}_icon{ext}").is_file()), None)
         if icon is None:
@@ -558,8 +563,8 @@ def scrape_apps(user: Path, apps: list[tuple[int, str]], args) -> None:
         return
     get_artwork_module().apply_artwork(
         user / "config/grid", apps, dry_run=args.dry_run)
-    if not args.dry_run:
-        set_shortcut_icons(user)
+    if not args.dry_run and apps:
+        set_shortcut_icons(user, allowed_appids={appid for appid, _ in apps})
 
 
 def do_import(args):
@@ -586,11 +591,22 @@ def do_import(args):
     additions = skipped = matches = 0
     artwork_apps = []
     if args.mode == "artwork":
+        roots = scan_roots(args.rom_root)
+        print("Lichii game folders:", *(f"{p} (recursive={deep})" for p, deep in roots),
+              sep="\n  ")
+        # Artwork is limited to previously imported *playable* ROMs that are
+        # still visible in Lichii's currently configured game directories.
+        visible = {str(p) for p in roms_in(roots)
+                   if not non_game_package_reason(p) and classify(p, "all") is not None}
         for entry in owners:
-            if isinstance(entry["appid"], int):
+            path = get_path(entry)
+            if path in visible and isinstance(entry["appid"], int):
                 artwork_apps.append((entry["appid"] & 0xffffffff, str(entry["name"])))
+            elif path is not None:
+                print(f"SKIP artwork outside Lichii game library: {Path(path).name}")
         if not artwork_apps:
-            print("No Lichii-managed Steam shortcuts found for artwork.")
+            print("No Lichii-managed Steam games in the current Lichii library "
+                  "need artwork processing.")
             return
         scrape_apps(user, artwork_apps, args)
         return
@@ -621,8 +637,9 @@ def do_import(args):
     else:
         roots = scan_roots(args.rom_root)
         if not roots:
-            abort("No Lichii ROM folders detected. Use --rom-root /path/to/games.")
-        print("ROM folders:", *map(str, roots), sep="\n  ")
+            abort("No accessible Lichii game folders. Add a directory in Lichii first.")
+        print("Lichii game folders:", *(f"{p} (recursive={deep})" for p, deep in roots),
+              sep="\n  ")
         for rom in roms_in(roots):
             reason = non_game_package_reason(rom)
             if reason:
@@ -731,7 +748,7 @@ def main():
     p = argparse.ArgumentParser(description="Lichii Steam Integration: Switch and Switch 2")
     p.add_argument("--mode", choices=["switch", "switch2", "all", "clear", "artwork"], default="all")
     p.add_argument("--rom-root", action="append", default=[],
-                   help="Extra ROM folder to scan (repeatable)")
+                   help="Disabled: only directories added in Lichii can be scanned")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--check-steam", action="store_true",
                    help="Only report active Steam processes; exit 3 if running")
