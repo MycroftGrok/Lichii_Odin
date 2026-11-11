@@ -41,12 +41,14 @@ The isolated [Odin ARM64 GitHub Actions workflow](https://github.com/MycroftGrok
 
 ## Steam Integration — Switch / Switch 2 collections
 
-The Odin fork includes a **Steam** menu (in builds that include this feature) with four commands:
+The Odin fork includes a **Steam** menu (in builds that include this feature) with four ROM-import/removal commands and two artwork actions:
 
 - **Import Switch roms to Steam**
 - **Import Switch 2 roms to Steam**
 - **Import all roms to Steam**
 - **Clear all roms from Steam**
+- **Scrape missing Steam artwork**
+- **Configure SteamGridDB API key...**
 
 The Games application menu also has a separate **Steam Integration** shortcut that runs **Import all roms to Steam**.
 
@@ -65,6 +67,37 @@ The Steam helper discovers libraries from the Lichii `gamedirs` setting and comm
 ```bash
 python3 "$HOME/.local/share/lichii/tools/steam-integration.py" --mode all --rom-root "$HOME/My ROMs"
 ```
+
+### Steam artwork scraping (covers, banners, backgrounds, logos, icons)
+
+Lichii can also automatically download available artwork from [SteamGridDB](https://www.steamgriddb.com/). It fills five Steam image slots for each imported Switch or Switch 2 ROM:
+
+| Steam artwork | SteamGridDB | Filename in Steam's grid folder |
+| --- | --- | --- |
+| Portrait cover | 600×900 grid | `<appid>p.png` |
+| Landscape cover | 920×430 / 460×215 grid | `<appid>.png` |
+| Game details background | Hero | `<appid>_hero.png` |
+| Transparent game title | Logo | `<appid>_logo.png` |
+| Game icon | Icon | `<appid>_icon.png` |
+
+Accepted file formats also include `.jpg` for covers/backgrounds and `.ico` for icons when the artwork provider supplies those. Artwork lives in the active Steam user's `userdata/<id>/config/grid/` directory.
+
+**First-time setup:** A SteamGridDB API key is required. Create a free account and generate your own key at [SteamGridDB API preferences](https://www.steamgriddb.com/profile/preferences/api). Do **not** post the key in GitHub or ChatGPT. In a new Lichii build, open **Steam → Configure SteamGridDB API key...**, paste the key in the hidden entry field, and confirm. It is stored **only on the Odin**, in `~/.config/lichii/steamgriddb-api-key` with owner-only permissions.
+
+Or configure it using a single Konsole command (the key input is hidden):
+
+```bash
+python3 "$HOME/.local/share/lichii/tools/steam_artwork.py" --configure
+```
+
+Once the key is configured, **importing ROMs automatically downloads artwork** for any imported games that are missing it. To scrape artwork for games you've *already* added to Steam, select **Steam → Scrape missing Steam artwork** or run:
+
+```bash
+python3 "$HOME/.local/share/lichii/tools/steam-integration.py" --mode artwork
+```
+
+**Safety:** The scraper uses exact game-title matches and skips ambiguous or missing results rather than picking the wrong game. It downloads only static PNG/JPEG images and ICO icons from SteamGridDB's HTTPS CDN. It does **not** replace existing or manually customized Steam artwork, and it does not modify ROM contents or emulator saves. If no API key is available, ROM imports still work; only artwork downloads are skipped. Some games may lack certain types of artwork. Steam must be fully closed when importing or scraping.
+
 
 ### How it works
 
