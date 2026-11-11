@@ -206,24 +206,70 @@ def discover_steam():
     return user, shortcuts, collections, namespaces
 
 
+def usable_game_directories(configured: Path) -> set[Path]:
+    """Resolve configured library folders, including ArmadaOS's /media alias.
+
+    ArmadaOS mounts removable cards under /run/media/<user>/<label>, while
+    previous Lichii configs can contain /media/<user>/<label>. Never change
+    the config or create mounts; only scan an alias if it really exists.
+    """
+    candidates = [configured]
+    parts = configured.parts
+    if len(parts) > 2 and parts[0] == "/" and parts[1] == "media":
+        candidates.append(Path("/run") / configured.relative_to("/"))
+    elif len(parts) > 3 and parts[:3] == ("/", "run", "media"):
+        candidates.append(Path("/") / Path(*parts[2:]))
+    valid = set()
+    for candidate in candidates:
+        if not candidate.is_dir():
+            continue
+        valid.add(candidate.resolve())
+        # A library configured at Switch 2 should also pick up a sibling
+        # Switch 1 directory on the same card (and vice versa).
+        if candidate.name.casefold().replace(" ", "") in ("switch", "switch1", "switch2"):
+            for sibling in ("Switch", "Switch 1", "Switch 2", "Switch2"):
+                other = candidate.parent / sibling
+                if other.is_dir():
+                    valid.add(other.resolve())
+    return valid
+
+
 def scan_roots(extra):
     roots = {p.resolve() for p in ROOTS if p.is_dir()}
+    # QSettings stores the path under Paths\gamedirs\N\path, not just
+    # gamedirs\N\path. Config files may also use forward slashes.
+    game_dir_pattern = re.compile(
+        r"^\s*(?:Paths[\\/])?gamedirs[\\/]\d+[\\/]path\s*=\s*(.*?)\s*$",
+        re.I,
+    )
+    recent_files_pattern = re.compile(
+        r"^\s*(?:Paths[\\/])?recentFiles\s*=\s*(.*?)\s*$",
+        re.I,
+    )
     for config in PROFILES:
         if not config.is_file():
             continue
         for line in config.read_text(encoding="utf-8-sig", errors="replace").splitlines():
-            found = re.match(r"^\s*gamedirs[\\/]\d+[\\/]path\s*=\s*(.+?)\s*$", line, re.I)
+            found = game_dir_pattern.match(line)
             if found:
-                path = Path(os.path.expandvars(found.group(1).strip('"'))).expanduser()
-                if path.is_dir():
-                    roots.add(path.resolve())
+                raw = found.group(1).strip().strip('"')
+                if raw and raw not in ("SDMC", "UserNAND", "SysNAND"):
+                    path = Path(os.path.expandvars(raw)).expanduser()
+                    roots.update(usable_game_directories(path))
+            else:
+                recent = recent_files_pattern.match(line)
+                if recent:
+                    for raw in recent.group(1).split(","):
+                        path = Path(os.path.expandvars(raw.strip().strip('"'))).expanduser()
+                        if path.suffix.casefold() in EXTS:
+                            roots.update(usable_game_directories(path.parent))
     for arg in extra:
         path = Path(arg).expanduser()
-        if not path.is_dir():
+        directories = usable_game_directories(path)
+        if not directories:
             abort(f"ROM directory not found: {path}")
-        roots.add(path.resolve())
+        roots.update(directories)
     return sorted(roots)
-
 
 def roms_in(roots):
     roms = {}
