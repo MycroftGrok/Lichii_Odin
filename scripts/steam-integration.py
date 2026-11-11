@@ -340,6 +340,7 @@ def do_import(args):
     own_by_rom = {get_path(e): e for e in owners}
     known_by_rom = {get_path(e): e for e in entries if get_path(e)}
     all_ids = {e["appid"] & 0xffffffff for e in entries if isinstance(e["appid"], int)}
+    titles_in_use = {str(e["name"]).casefold() for e in entries}
     members = {}
     for group in CATEGORIES:
         row = collections.get(group.casefold())
@@ -399,6 +400,11 @@ def do_import(args):
                     print(f"EXISTING IN {group}: {name}")
                     skipped += 1
                     continue
+                # Titles need unique app IDs even for cross-generation same-name ports.
+                if name.casefold() in titles_in_use:
+                    name = f"{name} [{group}]"
+                if name.casefold() in titles_in_use:
+                    name = f"{name} [{zlib.crc32(str(rom).encode('utf-8')):08x}]"
                 exe = '"' + str(SCRIPT) + '"'
                 appid = (zlib.crc32((exe + name).encode("utf-8")) | 0x80000000) & 0xffffffff
                 if appid in all_ids:
@@ -406,6 +412,7 @@ def do_import(args):
                     skipped += 1
                     continue
                 all_ids.add(appid)
+                titles_in_use.add(name.casefold())
                 new_entries.append(make_shortcut(index, appid, name, rom))
                 index += 1
                 additions += 1
