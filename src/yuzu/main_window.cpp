@@ -483,8 +483,8 @@ MainWindow::MainWindow(bool has_broken_vulkan)
         if (!accepted || api_key.isEmpty()) {
             return;
         }
-        if (api_key.size() < 12 || api_key.size() > 1024 || api_key.contains(QChar('\n')) ||
-            api_key.contains(QChar('\r')) || api_key.contains(QChar(' '))) {
+        if (api_key.size() < 12 || api_key.size() > 1024 || api_key.contains(QChar(u'\n')) ||
+            api_key.contains(QChar(u'\r')) || api_key.contains(QChar(u' '))) {
             QMessageBox::warning(this, tr("SteamGridDB artwork"),
                                  tr("Invalid key format. No changes made."));
             return;
