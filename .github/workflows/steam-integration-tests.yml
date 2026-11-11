@@ -8,6 +8,8 @@ on:
     paths:
       - "scripts/steam-integration.py"
       - "scripts/tests/test_steam_integration.py"
+      - "scripts/tests/test_steam_artwork.py"
+      - "scripts/steam_artwork.py"
       - "scripts/install-launcher.sh"
       - "scripts/install-release.sh"
       - "src/yuzu/main_window.cpp"
@@ -22,10 +24,10 @@ jobs:
       - uses: actions/checkout@v5
       - name: Python syntax
         run: |
-          python3 -m py_compile scripts/steam-integration.py scripts/tests/test_steam_integration.py
+          python3 -m py_compile scripts/steam-integration.py scripts/steam_artwork.py scripts/tests/test_steam_integration.py scripts/tests/test_steam_artwork.py
       - name: Shell syntax
         run: |
           bash -n scripts/install-launcher.sh scripts/install-release.sh scripts/launch-odin.sh
       - name: Offline Steam shortcut/collection regression tests
         run: |
-          python3 -m unittest discover -s scripts/tests -p 'test_steam_integration.py' -v
+          python3 -m unittest discover -s scripts/tests -p 'test_steam_*.py' -v
