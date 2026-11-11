@@ -308,7 +308,7 @@ def resolve_configured_game_directory(configured: Path) -> Path | None:
 
 
 def scan_roots(extra):
-    """Return registered Lichii game folders and their deep-scan preferences.
+    r"""Return registered Lichii game folders and their deep-scan preferences.
 
     QSettings persists Paths\gamedirs\N\path and
     Paths\gamedirs\N\deep_scan. The first existing *Lichii* config is
