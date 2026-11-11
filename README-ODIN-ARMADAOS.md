@@ -144,8 +144,11 @@ feature checkout **odin-steam-preview**, paste the following into Konsole:
 ```bash
 cd "$HOME/Applications/Lichii/source" &&
 git pull --ff-only odin-fork feature/steam-integration-switch-collections-20261110 &&
+bash scripts/install-launcher.sh &&
 bash scripts/build-steam-menu-test.sh
 ```
+
+Close any running Lichii test window before rebuilding. `install-launcher.sh` also refreshes the Python helpers used by the in-app Steam menu, while preserving your stable executable.
 
 This compiles the GUI target in an independent
 `~/Applications/Lichii/build-steam-menu-test/` directory, uses the existing
