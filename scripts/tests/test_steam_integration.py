@@ -131,6 +131,28 @@ class SteamIntegrationTests(unittest.TestCase):
         self.assertEqual(shlex.split(entries[0]["options"]), [str(rom)])
         self.assertEqual(steam.get_path(entries[0]), str(rom.resolve()))
 
+    def test_exclude_dlc_updates_and_keep_full_games(self):
+        examples = [
+            "Mario Kart 8 Deluxe - Wave 1-6 (World) (DLC Unlocker) (eShop).nsp",
+            "[DLC] TLoZ BotW DLC Pack 1.nsp",
+            "v-dragon quest i and ii hd 2d remake adventurous accessory kit dlc.nsp",
+            "The Game Update [v131072].nsp",
+        ]
+        for name in examples:
+            rom = self.root / "Switch" / name
+            rom.write_bytes(b"addon placeholder")
+            self.assertIsNotNone(steam.non_game_package_reason(rom))
+        full_game = self.root / "Switch" / (
+            "Diablo III Eternal Collection [01001B300B9BF064] [PE] [v0].xci"
+        )
+        full_game.write_bytes(b"full game placeholder")
+        self.assertIsNone(steam.non_game_package_reason(full_game))
+        self.assertIsNone(steam.non_game_package_reason(self.rom2))
+        self.run_mode("all")
+        _, entries, _, _ = steam.read_shortcuts(self.shortcuts.read_bytes())
+        self.assertEqual(len(entries), 4)  # unrelated + 3 playable games
+        self.assertTrue(all("DLC" not in e["name"].upper() for e in entries))
+
     def test_configured_gamedirs(self):
         extra = steam.HOME / "Extra Games"
         extra.mkdir()
