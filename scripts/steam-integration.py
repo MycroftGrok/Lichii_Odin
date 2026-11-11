@@ -296,6 +296,15 @@ def classify(rom: Path, selected: str) -> str | None:
     return {"switch": "Switch", "switch2": "Switch 2"}.get(selected)
 
 
+def game_display_name(rom: Path) -> str:
+    """Remove common dump metadata without rewriting the game's actual title."""
+    title = rom.stem.replace("_", " ").strip()
+    # 16-character Switch title IDs; vN update-version tokens; common region tags.
+    title = re.sub(r"\s*\[(?:[0-9a-f]{16}|v\d+|USA|EUR|JPN|WORLD)\]",
+                   "", title, flags=re.I)
+    return re.sub(r"\s{2,}", " ", title).strip()
+
+
 def non_game_package_reason(rom: Path) -> str | None:
     """Conservatively filter obvious updates/DLC from Steam's playable game list.
 
@@ -539,7 +548,7 @@ def do_import(args):
                 continue
             if args.mode == "switch2" and group != "Switch 2":
                 continue
-            name = rom.stem.replace("_", " ").strip()
+            name = game_display_name(rom)
             existing = own_by_rom.get(str(rom)) or known_by_rom.get(str(rom))
             if existing and isinstance(existing["appid"], int):
                 appid = existing["appid"] & 0xffffffff
