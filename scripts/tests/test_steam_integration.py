@@ -63,7 +63,8 @@ class SteamIntegrationTests(unittest.TestCase):
 
     @staticmethod
     def run_mode(mode):
-        steam.do_import(Namespace(mode=mode, rom_root=[], dry_run=False, yes=True))
+        steam.do_import(Namespace(mode=mode, rom_root=[], dry_run=False, yes=True,
+                                       no_artwork=True, configure_artwork=False))
 
     def test_import_deduplicate_and_clear(self):
         self.run_mode("all")
