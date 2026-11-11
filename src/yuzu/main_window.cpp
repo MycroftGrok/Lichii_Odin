@@ -88,6 +88,10 @@
 #include <QFutureWatcher>
 #include <QGuiApplication>
 #include <QInputDialog>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonParseError>
 #include <QLineEdit>
 #include <QMimeData>
 #include <QPalette>
@@ -519,6 +523,117 @@ MainWindow::MainWindow(bool has_broken_vulkan)
     add_steam_action(tr("Import all roms to Steam"), QStringLiteral("all"));
     steam_menu->addSeparator();
     add_steam_action(tr("Scrape missing Steam artwork"), QStringLiteral("artwork"));
+    auto* choose_artwork = steam_menu->addAction(
+        tr("Choose artwork edition for ambiguous games..."));
+    connect(choose_artwork, &QAction::triggered, this, [this]() {
+        QString helper = QDir::homePath() +
+                         QStringLiteral("/.local/share/lichii/tools/steam-integration.py");
+        if (!QFileInfo::exists(helper)) {
+            helper = QDir::homePath() +
+                     QStringLiteral("/Applications/Lichii/source/scripts/steam-integration.py");
+        }
+        if (!QFileInfo::exists(helper)) {
+            QMessageBox::warning(this, tr("SteamGridDB artwork"),
+                                 tr("Steam Integration helper not installed."));
+            return;
+        }
+        // Only read registered Lichii games. No Steam metadata is modified.
+        QProcess lookup;
+        lookup.start(QStringLiteral("python3"),
+                     QStringList{helper, QStringLiteral("--list-artwork-matches")});
+        if (!lookup.waitForFinished(90000) ||
+            lookup.exitStatus() != QProcess::NormalExit || lookup.exitCode() != 0) {
+            QMessageBox::warning(
+                this, tr("SteamGridDB artwork"),
+                tr("Could not load SteamGridDB choices:\n%1")
+                    .arg(QString::fromUtf8(lookup.readAllStandardError()).trimmed()));
+            return;
+        }
+        QJsonParseError json_error;
+        const QJsonDocument doc = QJsonDocument::fromJson(lookup.readAllStandardOutput(),
+                                                          &json_error);
+        if (json_error.error != QJsonParseError::NoError || !doc.isArray()) {
+            QMessageBox::warning(this, tr("SteamGridDB artwork"),
+                                 tr("The game match list has an invalid format."));
+            return;
+        }
+        const QJsonArray games = doc.array();
+        if (games.isEmpty()) {
+            QMessageBox::information(
+                this, tr("SteamGridDB artwork"),
+                tr("No ambiguous matches in the current Lichii library."));
+            return;
+        }
+        QStringList games_to_choose;
+        for (const QJsonValue& value : games) {
+            games_to_choose << value.toObject().value(QStringLiteral("title")).toString();
+        }
+        bool accepted = false;
+        const QString game_label = QInputDialog::getItem(
+            this, tr("SteamGridDB artwork"), tr("Choose the Lichii game:"),
+            games_to_choose, 0, false, &accepted);
+        if (!accepted) {
+            return;
+        }
+        const int game_index = games_to_choose.indexOf(game_label);
+        if (game_index < 0) {
+            return;
+        }
+        const QJsonObject game = games.at(game_index).toObject();
+        const QJsonArray candidates = game.value(QStringLiteral("matches")).toArray();
+        QStringList candidate_labels;
+        for (const QJsonValue& value : candidates) {
+            const QJsonObject candidate = value.toObject();
+            const QJsonValue year_value = candidate.value(QStringLiteral("year"));
+            const QString year = year_value.isDouble()
+                                     ? QStringLiteral(" (%1)").arg(year_value.toInt())
+                                     : QString();
+            candidate_labels << QStringLiteral("%1%2 - SteamGridDB ID %3")
+                                    .arg(candidate.value(QStringLiteral("name")).toString(), year)
+                                    .arg(candidate.value(QStringLiteral("id")).toInt());
+        }
+        if (candidate_labels.isEmpty()) {
+            return;
+        }
+        const QString chosen = QInputDialog::getItem(
+            this, tr("SteamGridDB artwork"),
+            tr("Select the correct release. This choice is saved for the ROM title ID:"),
+            candidate_labels, 0, false, &accepted);
+        if (!accepted) {
+            return;
+        }
+        const int candidate_index = candidate_labels.indexOf(chosen);
+        if (candidate_index < 0) {
+            return;
+        }
+        const int sgdb_id = candidates.at(candidate_index).toObject()
+                                .value(QStringLiteral("id")).toInt();
+        const quint32 appid = static_cast<quint32>(
+            game.value(QStringLiteral("appid")).toDouble());
+        if (sgdb_id <= 0 || appid == 0) {
+            QMessageBox::warning(this, tr("SteamGridDB artwork"),
+                                 tr("Invalid game match. No changes made."));
+            return;
+        }
+        // The Python helper independently verifies this ID against a live
+        // exact-title search and the ROM's current Lichii library membership.
+        QProcess save;
+        save.start(QStringLiteral("python3"),
+                   QStringList{helper, QStringLiteral("--set-artwork-match"),
+                               QString::number(appid), QString::number(sgdb_id)});
+        if (!save.waitForFinished(90000) ||
+            save.exitStatus() != QProcess::NormalExit || save.exitCode() != 0) {
+            QMessageBox::warning(
+                this, tr("SteamGridDB artwork"),
+                tr("Could not save artwork choice:\n%1")
+                    .arg(QString::fromUtf8(save.readAllStandardError()).trimmed()));
+            return;
+        }
+        QMessageBox::information(
+            this, tr("SteamGridDB artwork"),
+            tr("Artwork selection saved. Use 'Scrape missing Steam artwork' "
+               "to download its available cover, hero, logo and icon."));
+    });
     auto* configure_artwork = steam_menu->addAction(tr("Configure SteamGridDB API key..."));
     connect(configure_artwork, &QAction::triggered, this, [this]() {
         bool accepted = false;
