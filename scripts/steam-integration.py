@@ -423,6 +423,9 @@ def do_import(args):
                     data, collections, group, add_ids=assignments[group], version=version))
         print(f"New shortcuts: {additions}; existing ROM matches: {matches}; "
               f"skipped: {skipped}; updated collections: {updated}")
+    if binary == original_vdf and (collection_changes if args.mode == "clear" else updated) == 0:
+        print("Already synchronized. No Steam files changed.")
+        return
     if args.dry_run:
         print("DRY RUN: No Steam files changed.")
         return
