@@ -22,7 +22,6 @@ class SteamIntegrationTests(unittest.TestCase):
         steam.SCRIPT = home / ".local/bin/lichii-steam-game"
         steam.LAUNCHER = home / ".local/bin/lichii-odin"
         steam.PROFILES = [home / ".config/lichii/qt-config.ini"]
-        steam.ROOTS = [home / "Games"]
         steam.STEAM_ROOTS = [home / ".local/share/Steam"]
         steam.BACKUPS = home / ".local/share/lichii/backups"
         steam.steam_running = lambda: False
@@ -36,6 +35,16 @@ class SteamIntegrationTests(unittest.TestCase):
         self.rom2.parent.mkdir(parents=True)
         self.rom1.write_bytes(b"rom placeholder")
         self.rom2.write_bytes(b"rom placeholder")
+        config_file = steam.PROFILES[0]
+        config_file.parent.mkdir(parents=True)
+        config_file.write_text(
+            "[Paths]\n"
+            "Paths\\gamedirs\\size=2\n"
+            "Paths\\gamedirs\\1\\path=" + str(self.rom1.parent) + "\n"
+            "Paths\\gamedirs\\1\\deep_scan=false\n"
+            "Paths\\gamedirs\\2\\path=" + str(self.rom2.parent) + "\n"
+            "Paths\\gamedirs\\2\\deep_scan=false\n"
+        )
         user = home / ".local/share/Steam/userdata/1234"
         config = user / "config"
         config.mkdir(parents=True)
@@ -222,31 +231,104 @@ class SteamIntegrationTests(unittest.TestCase):
         self.assertEqual(len(entries), 4)  # unrelated + 3 playable games
         self.assertTrue(all("DLC" not in e["name"].upper() for e in entries))
 
-    def test_configured_gamedirs(self):
+    def test_configured_gamedirs_only(self):
         extra = steam.HOME / "Extra Games"
         extra.mkdir()
         config = steam.PROFILES[0]
-        config.parent.mkdir(parents=True)
-        config.write_text("[Paths]\ngamedirs\\1\\path=" + str(extra) + "\n")
-        self.assertIn(extra.resolve(), steam.scan_roots([]))
+        config.write_text("[Paths]\nPaths\\gamedirs\\1\\path=" + str(extra) + "\n")
+        self.assertEqual(steam.scan_roots([]), [(extra.resolve(), False)])
 
-    def test_armadaos_paths_gamedirs_and_sibling_switch_folder(self):
+    def test_armadaos_config_does_not_add_unregistered_sibling_or_recent_path(self):
         card = steam.HOME / "AndroidCard" / "roms"
         switch2 = card / "Switch 2"
         switch1 = card / "Switch"
+        recent = card / "Other"
         switch2.mkdir(parents=True)
         switch1.mkdir()
+        recent.mkdir()
         config = steam.PROFILES[0]
-        config.parent.mkdir(parents=True)
         config.write_text(
             "[General]\n"
             "Paths\\gamedirs\\size=4\n"
             "Paths\\gamedirs\\4\\path=" + str(switch2) + "\n"
-            "Paths\\recentFiles=" + str(switch2 / "Zelda [123456789ABCDEF0].nup") + "\n"
+            "Paths\\gamedirs\\4\\deep_scan=false\n"
+            "Paths\\recentFiles=" + str(recent / "Other Game.nup") + "\n"
         )
-        found = steam.scan_roots([])
-        self.assertIn(switch2.resolve(), found)
-        self.assertIn(switch1.resolve(), found)
+        roots = steam.scan_roots([])
+        self.assertEqual(roots, [(switch2.resolve(), False)])
+        self.assertNotIn((switch1.resolve(), False), roots)
+        self.assertNotIn((recent.resolve(), False), roots)
+
+    def test_root_override_rejected(self):
+        from unittest.mock import patch
+        with self.assertRaisesRegex(RuntimeError, "add that directory to Lichii"):
+            steam.scan_roots([str(self.rom1.parent)])
+        other = steam.HOME / ".config/eden/qt-config.ini"
+        other.parent.mkdir(parents=True)
+        other.write_text(
+            "[General]\nPaths\\gamedirs\\1\\path="
+            + str(self.rom2.parent) + "\n"
+        )
+        steam.PROFILES = [steam.HOME / "missing-lichii.ini"]
+        with self.assertRaisesRegex(RuntimeError, "No Lichii qt-config.ini"):
+            steam.scan_roots([])
+
+    def test_obey_deep_scan_setting_and_ignore_outside_symlinks(self):
+        library = self.root / "Switch 2"
+        nested = library / "Nested"
+        nested.mkdir()
+        nested_rom = nested / "Nested Game.nup"
+        nested_rom.write_bytes(b"rom placeholder")
+        bad_link = library / "Outside Game.nup"
+        outsider = steam.HOME / "Outside Game.nup"
+        outsider.write_bytes(b"rom placeholder")
+        bad_link.symlink_to(outsider)
+        config = steam.PROFILES[0]
+        config.write_text(
+            "[General]\n"
+            "Paths\\gamedirs\\1\\path=" + str(library) + "\n"
+            "Paths\\gamedirs\\1\\deep_scan=false\n"
+        )
+        roots = steam.scan_roots([])
+        self.assertEqual(steam.roms_in(roots), [self.rom2.resolve()])
+        config.write_text(config.read_text().replace(
+            "deep_scan=false", "deep_scan=true"
+        ))
+        self.assertEqual(
+            steam.roms_in(steam.scan_roots([])),
+            [nested_rom.resolve(), self.rom2.resolve()],
+        )
+
+    def test_artwork_scans_only_games_still_in_lichii(self):
+        from unittest.mock import patch
+        self.run_mode("all")
+        config = steam.PROFILES[0]
+        config.write_text(
+            "[Paths]\nPaths\\gamedirs\\4\\path="
+            + str(self.rom2.parent) + "\n"
+            "Paths\\gamedirs\\4\\deep_scan=false\n"
+        )
+        with patch.object(steam, "scrape_apps") as scrape:
+            steam.do_import(Namespace(
+                mode="artwork", rom_root=[], dry_run=False, yes=True,
+                no_artwork=False, shutdown_steam=False
+            ))
+            scrape.assert_called_once()
+            items = scrape.call_args.args[1]
+            self.assertEqual(len(items), 1)
+            self.assertEqual(items[0][1], "Example Two")
+
+    def test_import_scans_only_lichii_registered_game_folder(self):
+        config = steam.PROFILES[0]
+        config.write_text(
+            "[Paths]\nPaths\\gamedirs\\4\\path="
+            + str(self.rom2.parent) + "\n"
+            "Paths\\gamedirs\\4\\deep_scan=false\n"
+        )
+        self.run_mode("all")
+        _, entries, _, _ = steam.read_shortcuts(self.shortcuts.read_bytes())
+        self.assertEqual([e["name"] for e in entries],
+                         ["Unrelated", "Example Two"])
 
 
 if __name__ == "__main__":
