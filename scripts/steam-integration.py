@@ -340,12 +340,62 @@ def get_artwork_module():
     return module
 
 
+def set_shortcut_icons(user: Path) -> None:
+    """Fill blank icon fields only on Lichii-owned shortcuts, from downloaded icon art.
+
+    Writing <appid>_icon.png to Steam's grid folder may not be enough to set the
+    shortcut icon itself. Respect any custom icon the user already configured.
+    """
+    shortcuts = user / "config/shortcuts.vdf"
+    if not shortcuts.is_file():
+        return
+    old = shortcuts.read_bytes()
+    _, entries, _, _ = read_shortcuts(old)
+    grid = user / "config/grid"
+    changes = []
+    for entry in entries:
+        if not owned(entry) or not isinstance(entry["appid"], int):
+            continue
+        appid = entry["appid"] & 0xffffffff
+        icon = next((grid / f"{appid}_icon{ext}" for ext in (".png", ".ico", ".jpg")
+                     if (grid / f"{appid}_icon{ext}").is_file()), None)
+        if icon is None:
+            continue
+        # Only update an existing *blank* icon field; don't replace user art.
+        field_tag = b"\x01icon\x00"
+        offset = old.find(field_tag, entry["start"], entry["stop"])
+        if offset < 0:
+            continue
+        value_start = offset + len(field_tag)
+        value_end = old.find(b"\x00", value_start, entry["stop"])
+        if value_end != value_start:
+            continue
+        changes.append((value_start, str(icon).encode("utf-8")))
+    if not changes:
+        return
+    modified = old
+    for pos, value in sorted(changes, key=lambda pair: pair[0], reverse=True):
+        modified = modified[:pos] + value + modified[pos:]
+    if steam_running():
+        abort("Steam started during icon update. Close Steam and retry.")
+    if shortcuts.read_bytes() != old:
+        abort("Steam shortcuts changed during icon update. Nothing was written.")
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    target = BACKUPS / stamp
+    target.mkdir(parents=True, exist_ok=False)
+    (target / "shortcuts.vdf").write_bytes(old)
+    atomic_write(shortcuts, modified)
+    print(f"Updated {len(changes)} Steam shortcut icon paths; backup: {target}")
+
+
 def scrape_apps(user: Path, apps: list[tuple[int, str]], args) -> None:
     if args.no_artwork:
         print("Artwork skipped (--no-artwork).")
         return
     get_artwork_module().apply_artwork(
         user / "config/grid", apps, dry_run=args.dry_run)
+    if not args.dry_run:
+        set_shortcut_icons(user)
 
 
 def do_import(args):
