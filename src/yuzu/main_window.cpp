@@ -83,14 +83,37 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QDialog>
+#include <QFile>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QPlainTextEdit>
+#include <QPushButton>
+#include <QSaveFile>
+#include <QVBoxLayout>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFutureWatcher>
 #include <QGuiApplication>
 #include <QInputDialog>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonParseError>
+#include <QLineEdit>
 #include <QMimeData>
 #include <QPalette>
+#include <QProcess>
+#include <QMenu>
+#ifdef __linux__
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 #include <QProgressDialog>
+#include <QProgressBar>
+#include <memory>
+#include <QPointer>
 #include <QScreen>
 #include <QShortcut>
 #include <QStatusBar>
@@ -400,6 +423,480 @@ MainWindow::MainWindow(bool has_broken_vulkan)
     setAcceptDrops(true);
     ui->setupUi(this);
     statusBar()->hide();
+
+#if defined(__linux__)
+    // Expose Steam ROM integration in the native Lichii menu bar on Linux.
+    // The helper checks Steam and requests shutdown only after explicit user confirmation.
+    auto* steam_menu = new QMenu(tr("Steam"), this);
+    ui->menubar->insertMenu(ui->menu_Help->menuAction(), steam_menu);
+    // Created now so completion dialogs can open the viewer without a long
+    // output popup. The action is inserted later in its usual menu position.
+    auto* view_latest_log = new QAction(tr("View latest log..."), steam_menu);
+    const auto add_steam_action = [this, steam_menu, view_latest_log](const QString& title,
+                                                     const QString& mode) {
+        auto* action = steam_menu->addAction(title);
+        connect(action, &QAction::triggered, this, [this, mode]() {
+            QString helper = QDir::homePath() +
+                             QStringLiteral("/.local/share/lichii/tools/steam-integration.py");
+            if (!QFileInfo::exists(helper)) {
+                helper = QDir::homePath() +
+                         QStringLiteral("/Applications/Lichii/source/scripts/steam-integration.py");
+            }
+            if (!QFileInfo::exists(helper)) {
+                QMessageBox::warning(this, tr("Steam Integration"),
+                                     tr("Steam integration is not installed. Update your Odin fork "
+                                        "and run scripts/install-launcher.sh."));
+                return;
+            }
+            if (mode == QStringLiteral("clear") &&
+                QMessageBox::question(
+                    this, tr("Clear Lichii ROMs from Steam"),
+                    tr("Remove all Steam shortcuts created by Lichii Steam Integration? "
+                       "Your ROMs, saved games, other Steam shortcuts and collections "
+                       "will be preserved. Steam must be completely closed."),
+                    QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) {
+                return;
+            }
+            // Steam often stays in the tray/background after closing its window.
+            // Probe the exact live processes before doing any metadata writes.
+            // A real Steam session requires an explicit user-confirmed exit.
+            QProcess status_probe;
+            status_probe.setProcessChannelMode(QProcess::MergedChannels);
+            status_probe.start(QStringLiteral("python3"),
+                               QStringList{helper, QStringLiteral("--check-steam")});
+            if (!status_probe.waitForFinished(8000) ||
+                status_probe.exitStatus() != QProcess::NormalExit) {
+                QMessageBox::warning(
+                    this, tr("Steam Integration"),
+                    tr("Could not determine whether Steam is still running. "
+                       "No Steam files were changed."));
+                return;
+            }
+            bool request_shutdown = false;
+            const int probe_exit_code = status_probe.exitCode();
+            if (probe_exit_code == 3) {
+                const QString processes =
+                    QString::fromUtf8(status_probe.readAll()).trimmed();
+                const QString prompt =
+                    tr("%1\n\nSteam may still be running in the background even though "
+                       "its window is closed.\n\n"
+                       "Request a Steam shutdown before continuing? "
+                       "This can interrupt active Steam games or downloads. "
+                       "No Steam files will be modified unless Steam has fully exited.")
+                        .arg(processes);
+                if (QMessageBox::question(
+                        this, tr("Steam is still running"), prompt,
+                        QMessageBox::Yes | QMessageBox::No,
+                        QMessageBox::No) != QMessageBox::Yes) {
+                    return;
+                }
+                request_shutdown = true;
+            } else if (probe_exit_code != 0) {
+                QMessageBox::warning(
+                    this, tr("Steam Integration"),
+                    tr("Could not verify Steam's running state:\n%1\n"
+                       "No Steam files were changed.")
+                        .arg(QString::fromUtf8(status_probe.readAll()).trimmed()));
+                return;
+            }
+            // The helper records complete output to Steam > View latest log.
+            // Keep this window compact and display only structured progress.
+            // Avoid a Cancel action: killing the helper during multi-file Steam
+            // metadata writes could leave partial collection updates.
+            auto* dialog = new QDialog(this);
+            dialog->setWindowTitle(tr("Steam Integration progress"));
+            dialog->setAttribute(Qt::WA_DeleteOnClose);
+            dialog->setWindowModality(Qt::WindowModal);
+            dialog->setWindowFlags(dialog->windowFlags() & ~Qt::WindowCloseButtonHint);
+            dialog->resize(580, 195);
+            auto* layout = new QVBoxLayout(dialog);
+            auto* phase_label = new QLabel(tr("Preparing Steam Integration..."), dialog);
+            phase_label->setTextFormat(Qt::PlainText);
+            layout->addWidget(phase_label);
+            auto* bar = new QProgressBar(dialog);
+            bar->setRange(0, 0);
+            layout->addWidget(bar);
+            auto* detail_label = new QLabel(
+                tr("Full details are available in Steam > View latest log."), dialog);
+            detail_label->setTextFormat(Qt::PlainText);
+            detail_label->setWordWrap(true);
+            layout->addWidget(detail_label);
+            auto* button_row = new QHBoxLayout();
+            auto* log_button = new QPushButton(tr("View log"), dialog);
+            auto* close_button = new QPushButton(tr("Close"), dialog);
+            log_button->setEnabled(false);
+            close_button->setEnabled(false);
+            button_row->addStretch();
+            button_row->addWidget(log_button);
+            button_row->addWidget(close_button);
+            layout->addLayout(button_row);
+            connect(close_button, &QPushButton::clicked, dialog, &QDialog::accept);
+            connect(log_button, &QPushButton::clicked, dialog,
+                    [dialog, view_latest_log]() {
+                        dialog->accept();
+                        view_latest_log->trigger();
+                    });
+
+            QPointer<QDialog> progress_window(dialog);
+            auto* process = new QProcess(this);
+            process->setProcessChannelMode(QProcess::SeparateChannels);
+            auto pending_stdout = std::make_shared<QByteArray>();
+            connect(process, &QProcess::readyReadStandardOutput, this,
+                    [process, progress_window, pending_stdout, bar, phase_label,
+                     detail_label]() {
+                        pending_stdout->append(process->readAllStandardOutput());
+                        while (true) {
+                            const qsizetype newline = pending_stdout->indexOf('\n');
+                            if (newline < 0) {
+                                break;
+                            }
+                            const QByteArray line = pending_stdout->left(newline).trimmed();
+                            pending_stdout->remove(0, newline + 1);
+                            constexpr char prefix[] = "LICHII_PROGRESS ";
+                            if (!line.startsWith(prefix) || !progress_window) {
+                                continue;
+                            }
+                            const QJsonDocument json = QJsonDocument::fromJson(
+                                line.mid(sizeof(prefix) - 1));
+                            if (!json.isObject()) {
+                                continue;
+                            }
+                            const QJsonObject data = json.object();
+                            const QString stage =
+                                data.value(QStringLiteral("stage")).toString();
+                            const QString detail =
+                                data.value(QStringLiteral("detail")).toString();
+                            const int current =
+                                data.value(QStringLiteral("current")).toInt();
+                            const int total =
+                                data.value(QStringLiteral("total")).toInt();
+                            if (stage.isEmpty()) {
+                                continue;
+                            }
+                            phase_label->setText(stage);
+                            if (total > 0 && total <= 1000000) {
+                                bar->setRange(0, total);
+                                bar->setValue(qBound(0, current, total));
+                                detail_label->setText(
+                                    QStringLiteral("%1 / %2%3")
+                                        .arg(qBound(0, current, total))
+                                        .arg(total)
+                                        .arg(detail.isEmpty() ? QString() :
+                                             QStringLiteral(" - ") + detail));
+                            } else {
+                                bar->setRange(0, 0);
+                                detail_label->setText(
+                                    detail.isEmpty()
+                                        ? QStringLiteral("Working...")
+                                        : detail);
+                            }
+                        }
+                        if (pending_stdout->size() > 65536) {
+                            pending_stdout->clear();
+                        }
+                    });
+            // Drain stderr so the helper cannot block on a full process pipe.
+            // It is already included in the automatically saved Python log.
+            connect(process, &QProcess::readyReadStandardError, process,
+                    [process]() { process->readAllStandardError(); });
+            const auto finish = [steam_menu, progress_window, bar, phase_label,
+                                 detail_label, log_button, close_button](
+                                    bool success, const QString& failure) {
+                steam_menu->setEnabled(true);
+                if (!progress_window) {
+                    return;
+                }
+                bar->setRange(0, 1);
+                bar->setValue(success ? 1 : 0);
+                phase_label->setText(
+                    success ? QStringLiteral("Steam Integration finished")
+                            : QStringLiteral("Steam Integration failed"));
+                detail_label->setText(
+                    success ? QStringLiteral("Completed. Open the log for details.")
+                            : failure.isEmpty()
+                                  ? QStringLiteral("Open the log for error details.")
+                                  : failure);
+                log_button->setEnabled(true);
+                close_button->setEnabled(true);
+            };
+            connect(process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                    this, [process, finish](int exit_code, QProcess::ExitStatus exit_status) {
+                        finish(exit_status == QProcess::NormalExit && exit_code == 0, {});
+                        process->deleteLater();
+                    });
+            connect(process, &QProcess::errorOccurred, this,
+                    [process, finish](QProcess::ProcessError failure) {
+                        if (failure == QProcess::FailedToStart) {
+                            finish(false, QStringLiteral("Could not launch the Steam helper."));
+                            process->deleteLater();
+                        }
+                    });
+            steam_menu->setEnabled(false);
+            dialog->show();
+            QStringList args{helper, QStringLiteral("--mode"), mode};
+            if (mode == QStringLiteral("clear")) {
+                args << QStringLiteral("--yes");
+            }
+            if (request_shutdown) {
+                args << QStringLiteral("--shutdown-steam");
+            }
+            process->start(QStringLiteral("python3"), args);
+        });
+    };
+    add_steam_action(tr("Import Switch roms to Steam"), QStringLiteral("switch"));
+    add_steam_action(tr("Import Switch 2 roms to Steam"), QStringLiteral("switch2"));
+    add_steam_action(tr("Import all roms to Steam"), QStringLiteral("all"));
+    steam_menu->addSeparator();
+    add_steam_action(tr("Scrape missing Steam artwork"), QStringLiteral("artwork"));
+    auto* choose_artwork = steam_menu->addAction(
+        tr("Choose artwork edition for ambiguous games..."));
+    connect(choose_artwork, &QAction::triggered, this, [this]() {
+        QString helper = QDir::homePath() +
+                         QStringLiteral("/.local/share/lichii/tools/steam-integration.py");
+        if (!QFileInfo::exists(helper)) {
+            helper = QDir::homePath() +
+                     QStringLiteral("/Applications/Lichii/source/scripts/steam-integration.py");
+        }
+        if (!QFileInfo::exists(helper)) {
+            QMessageBox::warning(this, tr("SteamGridDB artwork"),
+                                 tr("Steam Integration helper not installed."));
+            return;
+        }
+        // Only read registered Lichii games. No Steam metadata is modified.
+        QProcess lookup;
+        lookup.start(QStringLiteral("python3"),
+                     QStringList{helper, QStringLiteral("--list-artwork-matches")});
+        if (!lookup.waitForFinished(90000) ||
+            lookup.exitStatus() != QProcess::NormalExit || lookup.exitCode() != 0) {
+            QMessageBox::warning(
+                this, tr("SteamGridDB artwork"),
+                tr("Could not load SteamGridDB choices:\n%1")
+                    .arg(QString::fromUtf8(lookup.readAllStandardError()).trimmed()));
+            return;
+        }
+        QJsonParseError json_error;
+        const QJsonDocument doc = QJsonDocument::fromJson(lookup.readAllStandardOutput(),
+                                                          &json_error);
+        if (json_error.error != QJsonParseError::NoError || !doc.isArray()) {
+            QMessageBox::warning(this, tr("SteamGridDB artwork"),
+                                 tr("The game match list has an invalid format."));
+            return;
+        }
+        const QJsonArray games = doc.array();
+        if (games.isEmpty()) {
+            QMessageBox::information(
+                this, tr("SteamGridDB artwork"),
+                tr("No ambiguous matches in the current Lichii library."));
+            return;
+        }
+        QStringList games_to_choose;
+        for (const QJsonValue& value : games) {
+            games_to_choose << value.toObject().value(QStringLiteral("title")).toString();
+        }
+        bool accepted = false;
+        const QString game_label = QInputDialog::getItem(
+            this, tr("SteamGridDB artwork"), tr("Choose the Lichii game:"),
+            games_to_choose, 0, false, &accepted);
+        if (!accepted) {
+            return;
+        }
+        const int game_index = games_to_choose.indexOf(game_label);
+        if (game_index < 0) {
+            return;
+        }
+        const QJsonObject game = games.at(game_index).toObject();
+        const QJsonArray candidates = game.value(QStringLiteral("matches")).toArray();
+        QStringList candidate_labels;
+        for (const QJsonValue& value : candidates) {
+            const QJsonObject candidate = value.toObject();
+            const QJsonValue year_value = candidate.value(QStringLiteral("year"));
+            const QString year = year_value.isDouble()
+                                     ? QStringLiteral(" (%1)").arg(year_value.toInt())
+                                     : QString();
+            candidate_labels << QStringLiteral("%1%2 - SteamGridDB ID %3")
+                                    .arg(candidate.value(QStringLiteral("name")).toString(), year)
+                                    .arg(candidate.value(QStringLiteral("id")).toInt());
+        }
+        if (candidate_labels.isEmpty()) {
+            return;
+        }
+        const QString chosen = QInputDialog::getItem(
+            this, tr("SteamGridDB artwork"),
+            tr("Select the correct release. This choice is saved for the ROM title ID:"),
+            candidate_labels, 0, false, &accepted);
+        if (!accepted) {
+            return;
+        }
+        const int candidate_index = candidate_labels.indexOf(chosen);
+        if (candidate_index < 0) {
+            return;
+        }
+        const int sgdb_id = candidates.at(candidate_index).toObject()
+                                .value(QStringLiteral("id")).toInt();
+        const quint32 appid = static_cast<quint32>(
+            game.value(QStringLiteral("appid")).toDouble());
+        if (sgdb_id <= 0 || appid == 0) {
+            QMessageBox::warning(this, tr("SteamGridDB artwork"),
+                                 tr("Invalid game match. No changes made."));
+            return;
+        }
+        // The Python helper independently verifies this ID against a live
+        // exact-title search and the ROM's current Lichii library membership.
+        QProcess save;
+        save.start(QStringLiteral("python3"),
+                   QStringList{helper, QStringLiteral("--set-artwork-match"),
+                               QString::number(appid), QString::number(sgdb_id)});
+        if (!save.waitForFinished(90000) ||
+            save.exitStatus() != QProcess::NormalExit || save.exitCode() != 0) {
+            QMessageBox::warning(
+                this, tr("SteamGridDB artwork"),
+                tr("Could not save artwork choice:\n%1")
+                    .arg(QString::fromUtf8(save.readAllStandardError()).trimmed()));
+            return;
+        }
+        QMessageBox::information(
+            this, tr("SteamGridDB artwork"),
+            tr("Artwork selection saved. Use 'Scrape missing Steam artwork' "
+               "to download its available cover, hero, logo and icon."));
+    });
+    auto* configure_artwork = steam_menu->addAction(tr("Configure SteamGridDB API key..."));
+    connect(configure_artwork, &QAction::triggered, this, [this]() {
+        bool accepted = false;
+        const QString api_key = QInputDialog::getText(
+            this, tr("SteamGridDB artwork"), tr("Paste your personal SteamGridDB API key:"),
+            QLineEdit::Password, QString(), &accepted).trimmed();
+        if (!accepted || api_key.isEmpty()) {
+            return;
+        }
+        if (api_key.size() < 12 || api_key.size() > 1024 || api_key.contains(QChar(u'\n')) ||
+            api_key.contains(QChar(u'\r')) || api_key.contains(QChar(u' '))) {
+            QMessageBox::warning(this, tr("SteamGridDB artwork"),
+                                 tr("Invalid key format. No changes made."));
+            return;
+        }
+        const QString parent = QDir::homePath() + QStringLiteral("/.config/lichii");
+        if (!QDir().mkpath(parent)) {
+            QMessageBox::warning(this, tr("SteamGridDB artwork"),
+                                 tr("Could not create the local configuration directory."));
+            return;
+        }
+        const QByteArray filepath = (parent + QStringLiteral("/steamgriddb-api-key")).toUtf8();
+        const QByteArray secret = api_key.toUtf8() + '\n';
+        // Open with O_NOFOLLOW and restrict permissions to the current user.
+        int fd = ::open(filepath.constData(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW,
+                        S_IRUSR | S_IWUSR);
+        if (fd < 0) {
+            QMessageBox::warning(this, tr("SteamGridDB artwork"),
+                                 tr("Could not securely open the API key file."));
+            return;
+        }
+        const bool success = ::fchmod(fd, S_IRUSR | S_IWUSR) == 0 &&
+                             ::write(fd, secret.constData(), secret.size()) == secret.size();
+        ::close(fd);
+        if (success) {
+            QMessageBox::information(
+                this, tr("SteamGridDB artwork"),
+                tr("SteamGridDB key saved locally. Import games or select "
+                   "'Scrape missing Steam artwork' to download available artwork."));
+        } else {
+            QMessageBox::warning(this, tr("SteamGridDB artwork"),
+                                 tr("Could not save the API key completely."));
+        }
+    });
+    steam_menu->addSeparator();
+    steam_menu->addAction(view_latest_log);
+    connect(view_latest_log, &QAction::triggered, this, [this]() {
+        const QString log_path = QDir::homePath() +
+                                 QStringLiteral("/.local/share/lichii/logs/"
+                                                "steam-integration-latest.log");
+        QFile log_file(log_path);
+        QString content;
+        bool available = false;
+        if (log_file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            content = QString::fromUtf8(log_file.readAll());
+            available = true;
+        } else if (!QFileInfo::exists(log_path)) {
+            content = tr("No Steam Integration log yet.\n\n"
+                         "Run an import or 'Scrape missing Steam artwork' first, "
+                         "then reopen this window. Logs are saved automatically.");
+        } else {
+            content = tr("Unable to read the latest Steam Integration log:\n%1")
+                          .arg(log_file.errorString());
+        }
+
+        QDialog viewer(this);
+        viewer.setWindowTitle(tr("Latest Steam Integration Log"));
+        viewer.resize(820, 510);
+        auto* layout = new QVBoxLayout(&viewer);
+        auto* source = new QLabel(tr("Latest completed run: %1").arg(log_path), &viewer);
+        source->setWordWrap(true);
+        layout->addWidget(source);
+
+        auto* log_text = new QPlainTextEdit(&viewer);
+        log_text->setReadOnly(true);
+        log_text->setPlainText(content);
+        layout->addWidget(log_text);
+
+        auto* buttons = new QHBoxLayout();
+        auto* copy_button = new QPushButton(tr("Copy to clipboard"), &viewer);
+        auto* save_button = new QPushButton(tr("Save as .log..."), &viewer);
+        auto* close_button = new QPushButton(tr("Close"), &viewer);
+        copy_button->setEnabled(available);
+        save_button->setEnabled(available);
+        buttons->addWidget(copy_button);
+        buttons->addWidget(save_button);
+        buttons->addStretch();
+        buttons->addWidget(close_button);
+        layout->addLayout(buttons);
+
+        connect(copy_button, &QPushButton::clicked, &viewer, [content]() {
+            QGuiApplication::clipboard()->setText(content);
+        });
+        connect(save_button, &QPushButton::clicked, &viewer,
+                [this, &viewer, content]() {
+                    QFileDialog save_dialog(
+                        &viewer, tr("Save Steam Integration Log"),
+                        QDir::homePath() + QStringLiteral("/steam-integration-latest.log"),
+                        tr("Log files (*.log)"));
+                    save_dialog.setAcceptMode(QFileDialog::AcceptSave);
+                    save_dialog.setDefaultSuffix(QStringLiteral("log"));
+                    if (save_dialog.exec() != QDialog::Accepted ||
+                        save_dialog.selectedFiles().isEmpty()) {
+                        return;
+                    }
+                    const QString destination = save_dialog.selectedFiles().first();
+                    if (!destination.endsWith(QStringLiteral(".log"), Qt::CaseInsensitive)) {
+                        QMessageBox::warning(
+                            &viewer, tr("Save Steam Integration Log"),
+                            tr("Choose a filename ending with .log. No file was saved."));
+                        return;
+                    }
+                    QSaveFile output(destination);
+                    if (!output.open(QIODevice::WriteOnly)) {
+                        QMessageBox::warning(
+                            &viewer, tr("Save Steam Integration Log"),
+                            tr("Could not open the selected file:\n%1").arg(output.errorString()));
+                        return;
+                    }
+                    const QByteArray bytes = content.toUtf8();
+                    if (output.write(bytes) != bytes.size() || !output.commit()) {
+                        QMessageBox::warning(
+                            &viewer, tr("Save Steam Integration Log"),
+                            tr("Could not finish saving the .log file:\n%1")
+                                .arg(output.errorString()));
+                        return;
+                    }
+                    QMessageBox::information(
+                        &viewer, tr("Steam Integration Log"),
+                        tr("Saved log to:\n%1").arg(destination));
+                });
+        connect(close_button, &QPushButton::clicked, &viewer, &QDialog::accept);
+        viewer.exec();
+    });
+    steam_menu->addSeparator();
+    add_steam_action(tr("Clear all roms from Steam"), QStringLiteral("clear"));
+#endif
+
 
     startup_icon_theme = QIcon::themeName();
     // fallback can only be set once, colorful theme icons are okay on both light/dark
