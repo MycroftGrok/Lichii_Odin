@@ -8,6 +8,7 @@ Never removes ROMs, Lichii configuration, or other Steam shortcuts.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager, redirect_stdout, redirect_stderr
 import datetime
 import importlib.util
 import json
@@ -28,6 +29,7 @@ SCRIPT = HOME / ".local/bin/lichii-steam-game"
 LAUNCHER = HOME / ".local/bin/lichii-odin"
 EXTS = {".nsp", ".xci", ".nsz", ".xcz", ".nup", ".nro"}
 BACKUPS = HOME / ".local/share/lichii/steam-integration-backups"
+LATEST_LOG = HOME / ".local/share/lichii/logs/steam-integration-latest.log"
 PROFILES = [
     HOME / ".config/lichii/qt-config.ini",
     HOME / ".local/share/lichii/config/qt-config.ini",
@@ -43,6 +45,72 @@ CATEGORIES = ("Switch", "Switch 2")
 
 def abort(message: str):
     raise RuntimeError(message)
+
+
+class _TeeOutput:
+    """Keep normal Konsole output while recording it in the latest run log."""
+
+    def __init__(self, original, logfile):
+        self.original = original
+        self.logfile = logfile
+
+    def write(self, value):
+        self.original.write(value)
+        self.logfile.write(value)
+        self.logfile.flush()
+        return len(value)
+
+    def flush(self):
+        self.original.flush()
+        self.logfile.flush()
+
+
+@contextmanager
+def record_latest_log(mode: str):
+    """Atomically replace the last complete run log after every Steam action.
+
+    The log captures imports, scraping, dry-runs, errors and Steam shutdown
+    messages. It intentionally never captures API key configuration, check
+    status probes, match-list JSON or raw API credentials.
+    """
+    folder = LATEST_LOG.parent
+    if folder.is_symlink():
+        abort("Refusing to write Steam log through a symbolic-link directory")
+    folder.mkdir(parents=True, exist_ok=True)
+    if LATEST_LOG.is_symlink():
+        abort("Refusing to replace a symbolic-link Steam log")
+    fd, temp_name = tempfile.mkstemp(prefix=".lichii-steam-log-", dir=folder)
+    temp_path = Path(temp_name)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as log:
+            out = _TeeOutput(sys.stdout, log)
+            err = _TeeOutput(sys.stderr, log)
+            with redirect_stdout(out), redirect_stderr(err):
+                print("Lichii Steam Integration")
+                print("Action:", mode)
+                print("Started:", datetime.datetime.now().astimezone().isoformat(timespec="seconds"))
+                print("-" * 50)
+                try:
+                    yield
+                except BaseException:
+                    print("-" * 50)
+                    print("Result: failed or interrupted")
+                    raise
+                else:
+                    print("-" * 50)
+                    print("Result: finished")
+                finally:
+                    print("Finished:",
+                          datetime.datetime.now().astimezone().isoformat(timespec="seconds"))
+            log.flush()
+            os.fsync(log.fileno())
+        # Readers always see a complete finished log, never a partial write.
+        if LATEST_LOG.is_symlink():
+            abort("Steam log path became a symbolic link; old log left untouched")
+        os.replace(temp_path, LATEST_LOG)
+    finally:
+        temp_path.unlink(missing_ok=True)
 
 
 def read_cstring(blob: bytes, start: int) -> tuple[str, int]:
@@ -843,7 +911,12 @@ def main():
         if args.set_artwork_match is not None:
             choose_artwork_match(*args.set_artwork_match)
             return
-        do_import(args)
+        with record_latest_log(args.mode):
+            try:
+                do_import(args)
+            except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
+                print(f"ERROR: {exc}", file=sys.stderr)
+                sys.exit(1)
     except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         sys.exit(1)
