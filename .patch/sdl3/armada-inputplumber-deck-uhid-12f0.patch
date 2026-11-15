@@ -1,0 +1,12 @@
+diff --git a/src/joystick/controller_list.h b/src/joystick/controller_list.h
+--- a/src/joystick/controller_list.h
++++ b/src/joystick/controller_list.h
+@@ -628,7 +628,8 @@
+ 	{ MAKE_CONTROLLER_ID( 0x28de, 0x1142 ), k_eControllerType_SteamController, NULL },	// Valve wireless Steam Controller
+ 	{ MAKE_CONTROLLER_ID( 0x28de, 0x1201 ), k_eControllerType_SteamControllerV2, NULL },	// Valve wired Steam Controller (HEADCRAB)
+ 	{ MAKE_CONTROLLER_ID( 0x28de, 0x1202 ), k_eControllerType_SteamControllerV2, NULL },	// Valve Bluetooth Steam Controller (HEADCRAB)
+ 	{ MAKE_CONTROLLER_ID( 0x28de, 0x1205 ), k_eControllerType_SteamControllerNeptune, NULL },	// Valve Steam Deck Builtin Controller
++	{ MAKE_CONTROLLER_ID( 0x28de, 0x12f0 ), k_eControllerType_SteamControllerNeptune, NULL },	// InputPlumber Steam Deck UHID (ArmadaOS)
+ 	{ MAKE_CONTROLLER_ID( 0x28de, 0x1302 ), k_eControllerType_SteamControllerTriton, NULL },	// Valve Steam Triton Controller
+ 	{ MAKE_CONTROLLER_ID( 0x28de, 0x1303 ), k_eControllerType_SteamControllerTriton, NULL },	// Valve Steam Triton Controller (BLE)
+ 	{ MAKE_CONTROLLER_ID( 0x28de, 0x1304 ), k_eControllerType_SteamControllerTriton, NULL },	// Valve Steam Proteus Dongle (Proprietary)

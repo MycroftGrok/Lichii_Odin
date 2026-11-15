@@ -38,6 +38,151 @@ This preserves the active executable and installs shortcuts for the existing Way
 
 The isolated [Odin ARM64 GitHub Actions workflow](https://github.com/MycroftGrok/Lichii_Odin/actions/workflows/odin-armadaos-aarch64.yml) builds on native Ubuntu ARM64 and publishes a `.tar.gz`, `.AppImage` and `SHA256SUMS` as an **experimental prerelease** whenever build-related changes land on `odin-armadaos` (or when manually dispatched). It does not update the user's device automatically. A CI compile is not a replacement for on-device NCE/Vulkan/controller testing.
 
+
+## Steam Integration — Switch / Switch 2 collections
+
+The Odin fork includes a **Steam** menu (in builds that include this feature):
+
+- **Import Switch roms to Steam**
+- **Import Switch 2 roms to Steam**
+- **Import all roms to Steam**
+- **Scrape missing Steam artwork**
+- **Choose artwork edition for ambiguous games...**
+- **Configure SteamGridDB API key...**
+- **View latest log...** (scrollable viewer, **Copy to clipboard**, **Save as .log...**)
+- **Clear all roms from Steam**
+
+The Games application menu also has a separate **Steam Integration** shortcut that runs **Import all roms to Steam**.
+
+### One-paste shortcut setup for an existing Odin installation
+
+Open Konsole in ArmadaOS:
+
+```bash
+cd "$HOME/Applications/Lichii/source" && git pull odin-fork odin-armadaos && bash scripts/install-launcher.sh
+```
+
+This adds **Steam Integration** to the KDE **Games** menu, installs the safe ROM launcher, and keeps the existing verified emulator binary unchanged. **Adding the native Steam menu inside Lichii requires rebuilding the Lichii application**; the menu will not appear in older executable builds.
+
+**Strict Lichii library scope:** Imports scan only the folders explicitly added to Lichii's game library (as saved in Lichii's `qt-config.ini` `Paths\gamedirs` entries). The scan respects each folder's **deep scan** setting. It does **not** infer nearby `Switch` or `Switch 2` folders, scan arbitrary `Games` directories, use recent-file history, or read Eden's library list. The old `--rom-root` override is disabled to prevent bypassing this restriction. To import games from another location, first add that exact directory inside Lichii's game library.
+
+Artwork scraping likewise processes only previously imported, Lichii-managed playable ROM entries that still reside in the currently configured Lichii game library. ROMs outside that library, including DLC/update packages, receive no scraping request. Already-imported Steam shortcuts are not silently removed when their source folder is removed from Lichii; the separate **Clear all roms from Steam** action still requires explicit confirmation.
+
+### Steam Integration progress and log viewer
+
+**Steam menu imports, Clear all roms from Steam, and Scrape missing Steam artwork** open a compact progress window rather than a long text-results popup. During imports it shows actual ROM-count progress; clearing shows the count of Lichii-owned shortcuts processed; artwork scraping shows actual per-game progress (plus the current game). Short stages such as Steam metadata writes show a busy indicator, not a fabricated percentage. When an action finishes, the same window shows success/failure with **View log** and **Close** buttons. Detailed output stays in the log, including individual missing-artwork reasons. No operation is canceled when a dialog is dismissed; the dialog does not offer unsafe cancellation during Steam metadata writes. The existing Steam-shutdown consent and Clear confirmation remain in place.
+
+**Steam → View latest log...** opens a scrollable, read-only window showing the **latest completed Steam Integration operation**. It has **Copy to clipboard** (the entire log) and **Save as .log...** (a standard Save As dialog; writes only to the selected file). The source log is never changed by the viewer.
+
+Imports, clear operations, artwork scrapes, and dry-runs automatically record stdout, stderr, Steam shutdown diagnostics, missing-game/artwork explanations, and completion/failure status to:
+
+`~/.local/share/lichii/logs/steam-integration-latest.log`
+
+The file is owner-only (mode 0600), replaced atomically when a run finishes, and not stored in the Git repository. Both **Steam menu** operations and **Konsole** CLI operations use it. The log contains game names, ROM locations, and Steam process information, so review it before sharing. API-key entry/configuration is not logged and the SteamGridDB key is not included in normal integration diagnostics. The log viewer shows a helpful empty state until the first operation completes. Steam Integration backups and the ROM library are unaffected.
+
+### Steam artwork scraping (covers, banners, backgrounds, logos, icons)
+
+Lichii can also automatically download available artwork from [SteamGridDB](https://www.steamgriddb.com/). It fills five Steam image slots for each imported Switch or Switch 2 ROM:
+
+| Steam artwork | SteamGridDB | Filename in Steam's grid folder |
+| --- | --- | --- |
+| Portrait cover | 600×900 grid | `<appid>p.png` |
+| Landscape cover | 920×430 / 460×215 grid | `<appid>.png` |
+| Game details background | Hero | `<appid>_hero.png` |
+| Transparent game title | Logo | `<appid>_logo.png` |
+| Game icon | Icon | `<appid>_icon.png` |
+
+Accepted file formats also include `.jpg` for covers/backgrounds and `.ico` for icons when the artwork provider supplies those. Artwork lives in the active Steam user's `userdata/<id>/config/grid/` directory.
+
+**First-time setup:** A SteamGridDB API key is required. Create a free account and generate your own key at [SteamGridDB API preferences](https://www.steamgriddb.com/profile/preferences/api). Do **not** post the key in GitHub or ChatGPT. In a new Lichii build, open **Steam → Configure SteamGridDB API key...**, paste the key in the hidden entry field, and confirm. It is stored **only on the Odin**, in `~/.config/lichii/steamgriddb-api-key` with owner-only permissions.
+
+Or configure it using a single Konsole command (the key input is hidden):
+
+```bash
+python3 "$HOME/.local/share/lichii/tools/steam_artwork.py" --configure
+```
+
+Once the key is configured, **importing ROMs automatically downloads artwork** for any imported games that are missing it.
+
+The artwork match overrides are stored locally at `~/.config/lichii/steamgriddb-artwork-matches.json` with owner-only permissions; they contain game IDs only, **never the API key**. To scrape artwork for games you've *already* added to Steam, select **Steam → Scrape missing Steam artwork** or run:
+
+```bash
+python3 "$HOME/.local/share/lichii/tools/steam-integration.py" --mode artwork
+```
+
+**Safety:** The scraper first extracts an explicit 16-hex Nintendo Title ID from a ROM filename (such as `[0400486024DEC000]`). Because SteamGridDB's game IDs are not Nintendo title IDs, a Nintendo ID only selects artwork automatically when a reviewed ID-to-SteamGridDB mapping is available. The verified 2026 Switch 2 Zelda: Ocarina of Time ID `0400486024DEC000` maps to SteamGridDB game `5532594`, not the original 1998 edition. Unknown title IDs fall back to exact-title matching and, for ambiguity, **Steam → Choose artwork edition for ambiguous games...**; your selection is saved locally against the Nintendo title ID for future runs. No unsupported ID is guessed. It downloads only static PNG/JPEG images and ICO icons from SteamGridDB's HTTPS CDN. It does **not** replace existing or manually customized Steam artwork, and it does not modify ROM contents or emulator saves. If no API key is available, ROM imports still work; only artwork downloads are skipped. Some games may lack certain types of artwork. Steam must be fully closed when importing or scraping. If the client is running in the background, Lichii now identifies the specific Steam processes and offers to request their shutdown **only after you approve**. This can interrupt Steam games or downloads. If Steam will not exit, the helper aborts without modifying Steam metadata; it never uses SIGKILL.
+
+
+To diagnose an apparently closed Steam client without changing anything:
+
+```bash
+python3 "$HOME/.local/share/lichii/tools/steam-integration.py" --check-steam
+```
+
+The check prints the current user's Steam process names and PIDs (exit code 3 means
+Steam processes are still present). Lichii's Steam menu prompts for shutdown if
+it sees any. From Konsole only, you may opt in with
+`--shutdown-steam` on an import or artwork command; the helper first
+tries Steam's normal `-shutdown` command if available, then sends SIGTERM
+only to recognized current-user Steam processes. It rechecks before writing
+Steam metadata, and stops if Steam remains running. Nothing is shut down
+silently, and the integration doesn't restart Steam afterward.
+
+### How it works
+
+Steam **must be fully closed** before importing or clearing games. Steam overwrites its shortcuts while running. The helper reads existing Steam `shortcuts.vdf` entries and the newer collection data from `cloud-storage-namespace-1.json`, backs up the original Steam metadata, then modifies only what is necessary. Collections are named exactly **Switch** and **Switch 2**. If those collections already exist, they are reused.
+
+Each imported title is a separate non-Steam shortcut pointing to the Lichii game wrapper; it starts **native Wayland Lichii with `-f -g "<ROM path>"`**, so fullscreen is requested and Lichii's existing per-game configuration remains intact. Steam's Proton compatibility override should remain off for this native launcher.
+
+Switch 1 and Switch 2 formats can overlap (`.nsp` and `.xci` do not identify a generation). The **Import all** action classifies games by the names of folders such as `Switch` and `Switch 2`; `.nup` is recognized as Switch 2. Unclassified games are **reported and skipped**, rather than incorrectly assigned. A generation-specific menu action assigns ambiguous games to the requested platform, but skips files clearly labeled as the other platform. Supported extensions include `.nsp`, `.xci`, `.nsz`, `.xcz`, `.nup` and `.nro`. Explicitly named **DLC**, **update**, **patch** and **unlocker** files (or content placed in DLC/update directories) are skipped because they are not independent games. This is filename-based safety filtering, not full ROM metadata classification; review the dry run and keep ambiguous titles out of Steam until verified.
+
+Repeated imports are **idempotent**: existing ROM paths are reused and games already in the correct collection are not duplicated. **Clear all roms from Steam** removes only entries created by this Lichii integration and removes their memberships; it preserves ROM files, emulator saves and settings, third-party Steam shortcuts and unrelated collections. Steam-metadata backups are stored under `~/.local/share/lichii/steam-integration-backups/`.
+
+For a read-only preview, run:
+
+```bash
+python3 "$HOME/.local/share/lichii/tools/steam-integration.py" --mode all --dry-run
+```
+
+The helper currently requires one identifiable Steam installation and one local signed-in Steam account, with Steam's modern cloudstorage collections files initialized. For multiple Steam profiles or an unrecognized format, it **stops without modifying Steam files**. Steam Flatpak permissions and Steam's cloud collection reconciliation must be tested on the target device; an offline test is not proof the live Steam UI will accept the edits. Backups are produced before modifications, so issues can be rolled back.
+
+
+### Test the compiled Steam menu safely on an already-working Odin
+
+The **Steam** menu is part of the Qt GUI executable and requires an ARM64 build;
+running the Python helper alone does not add it to an older Lichii binary.
+
+On an Odin 3 Ultra that has the working Fedora toolbox **lichii-debug** and the
+feature checkout **odin-steam-preview**, paste the following into Konsole:
+
+```bash
+cd "$HOME/Applications/Lichii/source" &&
+git pull --ff-only odin-fork feature/steam-integration-switch-collections-20261110 &&
+bash scripts/install-launcher.sh &&
+bash scripts/build-steam-menu-test.sh
+```
+
+Close any running Lichii test window before rebuilding. `install-launcher.sh` also refreshes the Python helpers used by the in-app Steam menu, while preserving your stable executable.
+
+This compiles the GUI target in an independent
+`~/Applications/Lichii/build-steam-menu-test/` directory, uses the existing
+toolbox and known-working Wayland/Turnip launch script, and installs a separate
+**Games → Lichii (Steam Menu Test)** entry and desktop shortcut. It **does not
+rebuild, delete, replace, or relink the stable Lichii executable**, and verifies
+the stable executable's SHA-256 did not change.
+
+After a successful build you may launch the test independently using:
+
+```bash
+"$HOME/.local/bin/lichii-steam-menu-test"
+```
+
+Check that the test GUI exposes **Steam → Configure SteamGridDB API key...**,
+then test game loading and the Steam shortcut workflow. Steam must be fully
+closed before the Steam metadata import or artwork scraping actions. **Do not
+promote this experimental build until it works on-device.** If the compiler
+fails, share the exact error output; the stable launcher remains available.
+
 ## What this fork addresses
 
 The initial ARM64 native-code execution (NCE) release crashed on `MRS CNTPCT_EL0`. The locally-tested branch adds timer handling for runtime NRO code, fixes the two-pass NSO loader so RomFS/ExeFS patches are visible to the first NCE scanning pass, and includes necessary GCC 16 build compatibility fixes. With the correct driver, the Odin 3 Ultra has launched Ocarina of Time at an observed 60 FPS. This is a single-device, single-game observation, not a performance guarantee.
