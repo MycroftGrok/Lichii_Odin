@@ -79,6 +79,7 @@ class BootstrapTests(unittest.TestCase):
                                         "sudo", "dnf", "install"))
             self.assertIn("qt6-qtwayland", args)
             self.assertIn("mesa-vulkan-drivers", args)
+            self.assertIn("libavdevice-free", args)
 
     def test_rejects_release_asset_with_bad_checksum(self):
         payload = b"tampered release installer"
