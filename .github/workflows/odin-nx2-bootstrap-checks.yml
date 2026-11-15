@@ -1,0 +1,44 @@
+name: Odin NX2 One-Command Bootstrap Checks
+
+on:
+  pull_request:
+    branches:
+      - odin-armadaos
+      - release/odin3-nx2-armadaos-20261115
+    paths:
+      - "scripts/bootstrap-odin-nx2.py"
+      - "scripts/tests/test_bootstrap_odin_nx2.py"
+      - "README-ODIN-NX2.md"
+      - ".github/workflows/odin-nx2-bootstrap-checks.yml"
+  push:
+    branches:
+      - feature/odin-nx2-one-command-bootstrap-20261115
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bootstrap-safety:
+    name: ARM64 bootstrap offline safety tests
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout Odin source
+        uses: actions/checkout@v5
+      - name: Confirm architecture and syntax
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "aarch64"
+          python3 -m py_compile scripts/bootstrap-odin-nx2.py scripts/tests/test_bootstrap_odin_nx2.py
+      - name: Exercise all bootstrap safety checks
+        run: |
+          python3 -m unittest discover -s scripts/tests -p 'test_bootstrap_odin_nx2.py' -v
+      - name: Run read-only diagnostic mode on isolated runner
+        run: |
+          python3 scripts/bootstrap-odin-nx2.py --diagnose
+      - name: Scope of validation
+        run: |
+          echo "Verified ARM64 syntax, safe existing install, container provisioning command,"
+          echo "release SHA pin, LSFG recovery and diagnostics using mocked OS/Steam data."
+          echo "Actual Fedora 44 DNF provisioning, Turnip, InputPlumber and clean ArmadaOS"
+          echo "device gameplay are NOT validated by this CI run."
