@@ -82,7 +82,18 @@ jobs:
       - name: Build
         run: |
           set -euo pipefail
-          cmake --build build/odin-release --target lichii lichii-cmd --parallel 4
+          # Keep noisy compiler progress in a file so a late linker failure is
+          # visible in GitHub logs instead of being hidden by log-size limits.
+          build_log="$RUNNER_TEMP/lichii-native-build.log"
+          if cmake --build build/odin-release --target lichii lichii-cmd --parallel 4 >"$build_log" 2>&1; then
+            echo "PASS: Native ARM64 compile/link completed"
+            tail -n 12 "$build_log"
+          else
+            code=$?
+            echo "::error::Native ARM64 compile/link failed (exit $code). Last 180 log lines:"
+            tail -n 180 "$build_log"
+            exit "$code"
+          fi
           test -x build/odin-release/bin/lichii
           test -x build/odin-release/bin/eden-cli
           # nxformat is now linked statically into Lichii (CMakeModules/NxFormat.cmake).
