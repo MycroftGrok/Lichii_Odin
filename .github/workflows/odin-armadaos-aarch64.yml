@@ -95,7 +95,9 @@ jobs:
           cmake --build build/odin-release --target lichii lichii-cmd --parallel 4
           test -x build/odin-release/bin/lichii
           test -x build/odin-release/bin/eden-cli
-          test -f build/odin-release/bin/libnxformat.so
+          # nxformat is now linked statically into Lichii (CMakeModules/NxFormat.cmake).
+          # Ensure NX converter code was built; no libnxformat.so should be required.
+          test -f build/odin-release/src/lichii/CMakeFiles/lichii.dir/nx_tools.cpp.o
           readelf -h build/odin-release/bin/lichii | grep 'Machine:.*AArch64'
 
       - name: Package AppImage and portable tarball
@@ -126,7 +128,8 @@ jobs:
             --icon-file "$RUNNER_TEMP/io.github.zortos293.lichii.png" \
             --plugin qt --output appimage
           test -s "$LDAI_OUTPUT"
-          test -f AppDir/usr/lib/libnxformat.so
+          # NX converter is statically linked; verify packaged runtime assets instead.
+          test -f AppDir/usr/bin/nx2_switches.txt
           test -f AppDir/usr/bin/qt.conf
           mv AppDir lichii
           ln -s usr/bin/lichii lichii/lichii
