@@ -85,6 +85,8 @@ jobs:
           cmake --build build/odin-release --target lichii lichii-cmd --parallel 4
           test -x build/odin-release/bin/lichii
           test -x build/odin-release/bin/eden-cli
-          test -f build/odin-release/bin/libnxformat.so
+          # nxformat is now linked statically into Lichii (CMakeModules/NxFormat.cmake).
+          # Ensure NX converter code was built; no libnxformat.so should be required.
+          test -f build/odin-release/src/lichii/CMakeFiles/lichii.dir/nx_tools.cpp.o
           readelf -h build/odin-release/bin/lichii | grep 'Machine:.*AArch64'
 
