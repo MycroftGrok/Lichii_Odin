@@ -4,8 +4,8 @@ on:
   pull_request:
     branches: [odin-armadaos]
     paths:
-      - "src/yuzu/main_window.cpp"
-      - "src/yuzu/main.ui"
+      - "src/lichii/main_window.cpp"
+      - "src/lichii/main.ui"
       - "scripts/steam-integration.py"
       - "scripts/steam_artwork.py"
       - ".github/workflows/pr-odin-steam-menu-build.yml"
@@ -82,7 +82,7 @@ jobs:
       - name: Build
         run: |
           set -euo pipefail
-          cmake --build build/odin-release --target yuzu yuzu-cmd --parallel 4
+          cmake --build build/odin-release --target lichii lichii-cmd --parallel 4
           test -x build/odin-release/bin/lichii
           test -x build/odin-release/bin/eden-cli
           test -f build/odin-release/bin/libnxformat.so
