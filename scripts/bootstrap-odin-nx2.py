@@ -46,6 +46,7 @@ FEDORA_RUNTIME = (
     "mesa-vulkan-drivers", "libusb1", "openssl-libs", "zlib-ng-compat",
     "libzstd", "lz4-libs", "boost-context", "boost-fiber", "opus",
     "libavcodec-free", "libavformat-free", "libavutil-free",
+    "libavdevice-free",
     "libavfilter-free", "libswscale-free", "libxkbcommon-x11", "libglvnd-opengl",
 )
 
