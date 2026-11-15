@@ -42,3 +42,61 @@ jobs:
           echo "release SHA pin, LSFG recovery and diagnostics using mocked OS/Steam data."
           echo "Actual Fedora 44 DNF provisioning, Turnip, InputPlumber and clean ArmadaOS"
           echo "device gameplay are NOT validated by this CI run."
+
+  fedora44-runtime-resolution:
+    name: Resolve published NX2 binary in Fedora 44 ARM64 runtime
+    runs-on: ubuntu-24.04-arm
+    container:
+      image: registry.fedoraproject.org/fedora:44
+    steps:
+      - name: Install smoke-test dependencies
+        run: dnf install -y git python3 curl ca-certificates binutils tar
+      - name: Checkout Odin source
+        uses: actions/checkout@v5
+      - name: Install real Fedora 44 ARM64 runtime packages
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import importlib.util
+          from pathlib import Path
+          import subprocess
+          path = Path("scripts/bootstrap-odin-nx2.py")
+          spec = importlib.util.spec_from_file_location("bootstrap", path)
+          module = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(module)
+          subprocess.run(["dnf", "install", "-y", *module.FEDORA_RUNTIME], check=True)
+          print("PASS: All proposed runtime RPMs resolved on native Fedora 44 ARM64")
+          PY
+      - name: Check dependencies of actual published NX2 ELF
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import tarfile
+          import urllib.request
+          import subprocess
+          url = "https://github.com/MycroftGrok/Lichii_Odin/releases/download/odin3-nx2-armadaos-20261115-v1/lichii-odin3-nx2-armadaos-aarch64.tar.gz"
+          expected = "746f33d65c4c0af74c423e70c69eade0c39683b4eb30f342f86aad94de1575d8"
+          file = Path("/tmp/nx2-odin-release.tar.gz")
+          with urllib.request.urlopen(url, timeout=120) as source, file.open("wb") as target:
+              import shutil
+              shutil.copyfileobj(source, target)
+          assert hashlib.sha256(file.read_bytes()).hexdigest() == expected, "Release archive changed"
+          with tarfile.open(file, "r:gz") as archive:
+              archive.extractall("/tmp/nx2-extract", filter="data")
+          binary = Path("/tmp/nx2-extract/lichii/bin/lichii")
+          assert binary.is_file()
+          subprocess.run(["readelf", "-h", str(binary)], check=True)
+          result = subprocess.run(["ldd", str(binary)], text=True, capture_output=True)
+          print(result.stdout)
+          assert result.returncode == 0 and "not found" not in result.stdout, (
+              "Published NX2 still has unresolved Fedora 44 ARM64 runtime dependencies"
+          )
+          print("PASS: Actual public NX2 binary resolved against fresh Fedora 44 ARM64 packages")
+          PY
+      - name: Explain limitation
+        if: always()
+        run: |
+          echo "RPM availability and actual ELF dynamic linking checked on Fedora ARM64."
+          echo "Turnip Vulkan, game launch, controller behavior and bootc host remain device-only tests."
