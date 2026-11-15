@@ -6,13 +6,13 @@
 -->
 
 > [!IMPORTANT]
-> **Odin 3 / Odin 2 ArmadaOS users:** This fork adds ARM64 NCE, NSO loader, and build compatibility modifications. For the installation procedure, required Turnip/Wayland settings, gamepad setup, and safe upstream updates, see **[Odin ARM64 / ArmadaOS installation guide](README-ODIN-ARMADAOS.md)** on the `odin-armadaos` branch.
+> **Odin 3 Ultra / ArmadaOS:** The [experimental NX2 ARM64 release](https://github.com/MycroftGrok/Lichii_Odin/releases/tag/odin3-nx2-armadaos-20261115-v1) is publicly available, with a [verified-package installer and setup notes](README-ODIN-NX2.md). For background on Turnip/Wayland, NCE and controllers, see the [Odin guide](README-ODIN-ARMADAOS.md).
 > **Tested:** Odin 3 Ultra running ArmadaOS; 60 FPS observed in one game. **Odin 2 remains untested.** This fork is independent of upstream Lichii; the original project is at [zortos293/Lichii](https://github.com/zortos293/Lichii).
 
 <h2 align="center">⚠️ Lichii has no official website ⚠️</h2>
 
 > [!CAUTION]
-> **Lichii has no official website.** The only site run by this project is the **game compatibility website, [lichii.zortos.me](https://lichii.zortos.me)**, for compatibility reports only. Download Lichii **only** from this repository's [releases page](https://github.com/zortos293/Lichii/releases). Any other "Lichii" website or download (such as lichii.org) is not ours and may contain malware ([#545](https://github.com/zortos293/Lichii/issues/545)).
+> **Independent fork:** This repository is an unofficial Odin/ArmadaOS fork. Obtain its experimental builds from [this fork's releases](https://github.com/MycroftGrok/Lichii_Odin/releases); for upstream releases, use [zortos293/Lichii](https://github.com/zortos293/Lichii/releases). Neither project endorses third-party 'Lichii' download websites; see upstream [security warning #545](https://github.com/zortos293/Lichii/issues/545).
 
 <p align="center">
   <img src="dist/branding/lichii_icon_with_logo.png" alt="Lichii" width="600">
@@ -28,27 +28,19 @@ Visit the [Lichii game compatibility website](https://lichii.zortos.me) to find 
 
 ## Downloads and setup
 
-### Odin 3 / ArmadaOS ARM64 (one-paste install)
+### Odin 3 Ultra / ArmadaOS ARM64 (experimental NX2)
 
-For **ARM64 ArmadaOS**, open Konsole and paste:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/MycroftGrok/Lichii_Odin/odin-armadaos/scripts/install-release.sh | bash
-```
-
-This installs the newest **experimental** ARM64 package when a GitHub build is available and automatically adds a **desktop shortcut** and a **KDE Games menu** entry. It will **not replace an existing working Lichii binary**. No root access or source compilation is needed for these packaged downloads.
-
-Already running this fork on the Odin? To add both shortcuts **without rebuilding or switching your stable version**:
+Get [NX2 release v1](https://github.com/MycroftGrok/Lichii_Odin/releases/tag/odin3-nx2-armadaos-20261115-v1), download `install-nx2-odin.py` from **Assets**, and run:
 
 ```bash
-cd "$HOME/Applications/Lichii/source" && git pull odin-fork odin-armadaos && bash scripts/install-launcher.sh
+python3 "$HOME/Downloads/install-nx2-odin.py"
 ```
 
-See the [Odin ARM64/ArmadaOS guide](README-ODIN-ARMADAOS.md) for NCE, Vulkan, InputPlumber, releases and safe updates. Odin 2 has not been validated.
+The installer verifies the published archive checksum and executable hash, installs into a release-specific directory, and **never replaces an existing working executable**. The first-install path requires an existing Fedora ARM64 `lichii-debug` Toolbox with compatible runtime dependencies; it does not provision those dependencies. See [NX2 installation instructions](README-ODIN-NX2.md) and the [ArmadaOS guide](README-ODIN-ARMADAOS.md). A clean ARM64 runner tests isolated installation and reinstall preservation, but an actual fresh-device ArmadaOS test remains outstanding. Odin 2 is untested.
 
+Lossless Scaling requires your own Steam installation of Lossless Scaling; its proprietary `Lossless.dll` is not distributed. The provided launcher can locate that DLL in the standard Steam library.
 
-
-Download Lichii only from this repository's [releases page](https://github.com/zortos293/Lichii/releases). Lichii has no other download site: archives offered elsewhere, such as lichii.org, are not built by this project, and one has been reported to install malware ([#545](https://github.com/zortos293/Lichii/issues/545)).
+The earlier `odin-armadaos-build-*` releases remain available for historical compatibility, but are not the NX2 package.
 
 On Windows, extract the entire build archive and run **lichii.exe**. Only use games and system files you have legally obtained. Games, keys and firmware are not included.
 
