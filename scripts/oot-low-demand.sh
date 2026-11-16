@@ -10,8 +10,8 @@ Usage: oot-low-demand.sh [--profile] [--aggressive] [-- Lichii arguments...]
 
   (no options)   Start experimental Lichii with reversible OOT-only low-demand mode.
   --profile      Also record GPU timestamps and capture the exact slow compute SPIR-V.
-  --hmma-lds     Opt-in software tensor/HMMA shared-memory substitution for the
-                 exact captured Ocarina shader. A/B test; NOT yet gameplay-validated.
+  --hmma-lds     Opt-in HMMA shared-memory substitution for the two captured Ocarina
+                 shaders (192- and 176-tensor-op variants). Second is UNVALIDATED.
   --aggressive   Optional UNSAFE-for-rendering A/B: skip one identified unused network
                  compute pass only after the No sharpening output bypass succeeds.
                  May cause visual errors; not proven on Odin.
@@ -71,15 +71,17 @@ fi
 # translation. XDG_CACHE_HOME controls EdenPath::ShaderDir on Linux; no cache
 # folders are deleted and the normal game's cache stays untouched.
 if (( hmma_lds )); then
-    export XDG_CACHE_HOME="$HOME/.cache/lichii-oot-extra-compute-trace-v2"
+    export XDG_CACHE_HOME="$HOME/.cache/lichii-oot-dual-hmma-lds-v3"
     mkdir -p -- "$XDG_CACHE_HOME"
-    original="$HOME/.local/share/lichii/dump/0400486024dec000_03bf0ffc7d2d0bed.spv"
-    saved="$HOME/Development/turnip-a830-drm/oot-hmma-lds-original/0400486024dec000_03bf0ffc7d2d0bed.spv"
-    if [[ -s "$original" && ! -e "$saved" ]]; then
-        mkdir -p -- "$(dirname -- "$saved")"
-        cp -n -- "$original" "$saved"
-        echo "Preserved pre-LDS diagnostic SPIR-V at: $saved"
-    fi
+    for shader_hash in 03bf0ffc7d2d0bed e40f5efb5480e692; do
+        original="$HOME/.local/share/lichii/dump/0400486024dec000_${shader_hash}.spv"
+        saved="$HOME/Development/turnip-a830-drm/oot-hmma-lds-original/0400486024dec000_${shader_hash}.spv"
+        if [[ -s "$original" && ! -e "$saved" ]]; then
+            mkdir -p -- "$(dirname -- "$saved")"
+            cp -n -- "$original" "$saved"
+            echo "Preserved previous diagnostic SPIR-V at: $saved"
+        fi
+    done
 fi
 export EDEN_NX2_OOT_LOW_DEMAND=1
 export EDEN_NX2_OOT_HMMA_LDS="$hmma_lds"
