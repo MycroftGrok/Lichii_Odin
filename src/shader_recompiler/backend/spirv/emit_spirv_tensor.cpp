@@ -280,9 +280,13 @@ void DefineSoftwareMatrixFunctions(EmitContext& ctx, const IR::Program& program)
     }();
     const u32 invocations = program.workgroup_size[0] * program.workgroup_size[1] *
                             program.workgroup_size[2];
-    const u32 staging_slots = invocations + 128U;
+    // Exactly six u32 source words per invocation are stored. The subgroup's
+    // (SubgroupId * SubgroupSize + lane) addresses are all within [0, invocations).
+    // The previous +128 spare lanes and seventh spare word were never accessed,
+    // and made the 176-HMMA variant exceed some Adreno shared-memory budgets.
+    const u32 staging_words = invocations * 6U;
     const u32 staging_offset = (program.shared_memory_size + 15U) & ~15U;
-    const u32 staging_total = staging_offset + staging_slots * 7U * sizeof(u32);
+    const u32 staging_total = staging_offset + staging_words * sizeof(u32);
     const u32 shared_limit = ctx.profile.max_compute_shared_memory_size != 0
                                  ? std::min(32768U, ctx.profile.max_compute_shared_memory_size)
                                  : 32768U;
@@ -302,14 +306,25 @@ void DefineSoftwareMatrixFunctions(EmitContext& ctx, const IR::Program& program)
                             program.info.storage_buffers_descriptors.size() == 1 &&
                             !program.info.uses_global_memory &&
                             ctx.SupportsSubgroups() && staging_total <= shared_limit;
+    if (lds_requested && Settings::GetCurrentProgramID() == 0x0400486024DEC000ULL &&
+        tensor_ops == 176U) {
+        LOG_INFO(Shader_SPIRV,
+                 "OOT HMMA LDS 176 eligibility: enabled={} needed16={} needed8={} "
+                 "threads={} guest_shared={} ssbos={} global_memory={} "
+                 "staging_bytes={} total_shared={} shared_limit={} subgroups={}",
+                 lds_target, needed[1], needed[0], invocations, program.shared_memory_size,
+                 program.info.storage_buffers_descriptors.size(), program.info.uses_global_memory,
+                 staging_words * sizeof(u32), staging_total, shared_limit,
+                 ctx.SupportsSubgroups());
+    }
     Id lds_var{}, lds_elem_ptr{}, lds_subgroup_id{}, lds_subgroup_size{};
     const bool lds_explicit = ctx.uses_explicit_workgroup_layout;
     if (lds_target) {
-        // Six u32 source words per lane, once per HMMA call, plus one spare row.
+        // Six u32 source words per lane, once per HMMA call; no unused spare row.
         // Each subgroup owns disjoint slots. Keep after guest shared memory in the
         // explicit-layout case to avoid aliasing the game's 5 KiB shared block.
         ctx.AddCapability(spv::Capability::GroupNonUniform);
-        const Id array = ctx.TypeArray(ctx.U32[1], ctx.Const(staging_slots * 7U));
+        const Id array = ctx.TypeArray(ctx.U32[1], ctx.Const(staging_words));
         lds_elem_ptr = ctx.TypePointer(spv::StorageClass::Workgroup, ctx.U32[1]);
         if (lds_explicit) {
             ctx.Decorate(array, spv::Decoration::ArrayStride, 4U);
