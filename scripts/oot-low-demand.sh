@@ -72,9 +72,11 @@ if (( profile )); then
     export EDEN_NX2_GPU_PROFILE=1
     export EDEN_DKB_FRAME_TRACE=1
 else
-    export EDEN_NX2_OOT_SLOW_COMPUTE_TRACE=0
-    export EDEN_NX2_GPU_PROFILE=0
-    export EDEN_DKB_FRAME_TRACE=0
+    # Nx2Profile checks whether the env var exists, not whether it equals "1".
+    # Setting EDEN_NX2_GPU_PROFILE=0 would still enable it and spoil FPS comparisons.
+    unset EDEN_NX2_OOT_SLOW_COMPUTE_TRACE
+    unset EDEN_NX2_GPU_PROFILE
+    unset EDEN_DKB_FRAME_TRACE
 fi
 
 echo "=== OOT ARM64 LOW-DEMAND EXPERIMENT ==="
