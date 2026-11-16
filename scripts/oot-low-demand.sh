@@ -71,7 +71,7 @@ fi
 # translation. XDG_CACHE_HOME controls EdenPath::ShaderDir on Linux; no cache
 # folders are deleted and the normal game's cache stays untouched.
 if (( hmma_lds )); then
-    export XDG_CACHE_HOME="$HOME/.cache/lichii-oot-dual-hmma-lds-v3"
+    export XDG_CACHE_HOME="$HOME/.cache/lichii-oot-dual-hmma-lds-compact-v4"
     mkdir -p -- "$XDG_CACHE_HOME"
     for shader_hash in 03bf0ffc7d2d0bed e40f5efb5480e692; do
         original="$HOME/.local/share/lichii/dump/0400486024dec000_${shader_hash}.spv"
