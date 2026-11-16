@@ -474,14 +474,17 @@ vk::ShaderModule EmitComputeModule(const Device& device, const Shader::Profile& 
 
     // Text log + .spv dump. Same split as the graphics path.
     const bool should_log = GPU::Logging::IsActive();
-    // Capture exactly the Ocarina shader measured at ~370 ms on Adreno 830.
-    // Opt-in; no full shader dump, cache reset or graphics setting changes.
+    // Capture the three outlier Ocarina compute shaders isolated by Odin GPU
+    // timestamps: 368 ms baseline, 351 ms in game load, 231 ms in a 4 FPS dip.
+    // Only on explicit opt-in; do not enable a global shader dump.
     static const bool trace_slow_compute{[] {
         const char* const value = std::getenv("EDEN_NX2_OOT_SLOW_COMPUTE_TRACE");
         return value != nullptr && value[0] == '1';
     }()};
-    constexpr u64 slow_hash = 0x03bf0ffc7d2d0bedULL;
-    const bool targeted_dump = trace_slow_compute && shader_hash == slow_hash &&
+    const bool targeted_hash = shader_hash == 0x03bf0ffc7d2d0bedULL ||
+                               shader_hash == 0xe40f5efb5480e692ULL ||
+                               shader_hash == 0x9302bc0d6d1d9bc1ULL;
+    const bool targeted_dump = trace_slow_compute && targeted_hash &&
                                Settings::GetCurrentProgramID() == 0x0400486024DEC000ULL;
     const bool should_dump = Settings::values.gpu_log_shader_dumps.GetValue() || targeted_dump;
     if (should_log || should_dump) {
@@ -496,7 +499,7 @@ vk::ShaderModule EmitComputeModule(const Device& device, const Shader::Profile& 
                                           std::span<const u32>(code.data(), code.size()));
             if (targeted_dump) {
                 LOG_INFO(Render_Vulkan,
-                         "NX2 OOT slow compute captured SPIR-V hash={:016x} words={} (Eden DumpDir)",
+                         "NX2 OOT compute trace captured SPIR-V hash={:016x} words={} (Eden DumpDir)",
                          shader_hash, code.size());
             }
         }
@@ -3465,15 +3468,33 @@ ComputePipelineCacheEntry PipelineCache::CreateComputePipeline(
     }
 
     auto program{TranslateProgram(pools.inst, pools.block, env, cfg, host_info)};
-    if (key.unique_hash == 0x03bf0ffc7d2d0bedULL &&
+    // A 231 ms (and a 351 ms) shader appeared after the HMMA LDS optimization
+    // made the original 370 ms shader run in ~32 ms. Identify their IR before
+    // considering any new substitution, so their shader correctness is retained.
+    const bool trace_extra_compute =
         Settings::GetCurrentProgramID() == 0x0400486024DEC000ULL &&
-        std::getenv("EDEN_NX2_OOT_SLOW_COMPUTE_TRACE") != nullptr) {
+        std::getenv("EDEN_NX2_OOT_SLOW_COMPUTE_TRACE") != nullptr &&
+        (key.unique_hash == 0x03bf0ffc7d2d0bedULL ||
+         key.unique_hash == 0xe40f5efb5480e692ULL ||
+         key.unique_hash == 0x9302bc0d6d1d9bc1ULL);
+    if (trace_extra_compute) {
+        u32 tensor_ops{}, tensor8{}, tensor16{};
+        for (const auto* block : program.blocks) {
+            for (const auto& inst : block->Instructions()) {
+                if (inst.GetOpcode() == Shader::IR::Opcode::TensorMulAdd) {
+                    ++tensor_ops;
+                    tensor8 += inst.Flags<u32>() == 8;
+                    tensor16 += inst.Flags<u32>() == 16;
+                }
+            }
+        }
         LOG_INFO(Render_Vulkan,
-                 "NX2 OOT slow compute IR hash={:016x} workgroup={}x{}x{} shared_bytes={} "
-                 "ssbos={} global_memory={}",
+                 "NX2 OOT compute trace IR hash={:016x} workgroup={}x{}x{} shared_bytes={} "
+                 "ssbos={} global_memory={} tensor_ops={} tensor8={} tensor16={}",
                  key.unique_hash, program.workgroup_size[0], program.workgroup_size[1],
                  program.workgroup_size[2], program.shared_memory_size,
-                 program.info.storage_buffers_descriptors.size(), program.info.uses_global_memory);
+                 program.info.storage_buffers_descriptors.size(), program.info.uses_global_memory,
+                 tensor_ops, tensor8, tensor16);
     }
     const VkDriverIdKHR driver_id = device.GetDriverID();
     const bool needs_shared_mem_clamp =
