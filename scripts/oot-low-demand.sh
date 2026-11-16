@@ -71,7 +71,7 @@ fi
 # translation. XDG_CACHE_HOME controls EdenPath::ShaderDir on Linux; no cache
 # folders are deleted and the normal game's cache stays untouched.
 if (( hmma_lds )); then
-    export XDG_CACHE_HOME="$HOME/.cache/lichii-oot-hmma-lds-experiment-v1"
+    export XDG_CACHE_HOME="$HOME/.cache/lichii-oot-extra-compute-trace-v2"
     mkdir -p -- "$XDG_CACHE_HOME"
     original="$HOME/.local/share/lichii/dump/0400486024dec000_03bf0ffc7d2d0bed.spv"
     saved="$HOME/Development/turnip-a830-drm/oot-hmma-lds-original/0400486024dec000_03bf0ffc7d2d0bed.spv"
@@ -122,11 +122,42 @@ if (( profile )); then
         cp -p -- "$log" "$out/eden-oot-low-demand.txt"
         echo
         echo "=== GPU PROFILE: SLOW COMPUTE ==="
-        grep -E 'NX2 OOT slow compute|DKB gpu_frame|DKB gpu_work|Async read-back per second|Skipping "Max Resolution|Skipping "Texture Pool' \
-            "$log" | tail -n 20 || true
+        grep -E 'NX2 OOT compute trace|OOT HMMA LDS enabled|DKB gpu_frame|DKB gpu_work|Async read-back per second' \
+            "$log" | tail -n 25 || true
         echo "Full log: $out/eden-oot-low-demand.txt"
+        echo "Captured SPIR-V files (only the 3 measured compute hashes):"
         find "$HOME/.local/share/lichii/dump" -maxdepth 3 -type f \
-             -name '*_03bf0ffc7d2d0bed.spv' -print 2>/dev/null || true
+             \( -name '*_03bf0ffc7d2d0bed.spv' -o -name '*_e40f5efb5480e692.spv' \
+                -o -name '*_9302bc0d6d1d9bc1.spv' \) -print 2>/dev/null || true
+        if (( hmma_lds )); then
+            python3 - "$log" <<'PY'
+from pathlib import Path
+from zipfile import ZipFile, ZIP_DEFLATED
+from datetime import datetime
+import sys
+home = Path.home()
+log = Path(sys.argv[1])
+dump_dir = home / ".local/share/lichii/dump"
+hashes = ("03bf0ffc7d2d0bed", "e40f5efb5480e692", "9302bc0d6d1d9bc1")
+output = home / "Downloads" / ("oot-extra-compute-trace-" + datetime.now().strftime("%Y%m%d-%H%M%S") + ".zip")
+captured = []
+with ZipFile(output, "w", ZIP_DEFLATED) as archive:
+    archive.write(log, "eden-oot-extra-compute.log")
+    for hash_value in hashes:
+        candidates = list(dump_dir.rglob("*_" + hash_value + ".spv")) if dump_dir.exists() else []
+        if candidates:
+            shader = max(candidates, key=lambda f: f.stat().st_mtime)
+            archive.write(shader, shader.name)
+            captured.append(hash_value)
+    archive.writestr("capture-status.txt",
+                     "Captured: " + ", ".join(captured) + "\\n" +
+                     "Missing: " + ", ".join(h for h in hashes if h not in captured) + "\\n")
+print("=== OOT EXTRA-COMPUTE DIAGNOSTIC ZIP ===")
+print(output)
+print("Captured hashes:", ", ".join(captured) if captured else "none")
+print("Attach this ZIP to ChatGPT for further shader analysis.")
+PY
+        fi
     else
         echo "No internal Eden log found; profiling capture unavailable."
     fi
