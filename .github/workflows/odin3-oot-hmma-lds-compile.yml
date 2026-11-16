@@ -1,0 +1,91 @@
+name: Odin 3 OOT HMMA LDS shader ARM64 compile
+
+on:
+  push:
+    branches:
+      - experiment/odin3-oot-hmma-lds
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compile-shader-recompiler:
+    name: Compile shader recompiler on ARM64 (no packaging or release)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    steps:
+      - name: Check out exact experimental source
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Check native architecture
+        run: test "$(uname -m)" = aarch64
+
+      - name: Install build dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            autoconf cmake g++ gcc git glslang-tools libglu1-mesa-dev \
+            libpulse-dev libtool libudev-dev libxkbcommon-x11-0 \
+            mesa-common-dev nasm ninja-build qt6-base-private-dev \
+            qt6-charts-dev qt6-tools-dev libavfilter-dev libavcodec-dev \
+            libswscale-dev pkg-config zlib1g-dev libva-dev libvdpau-dev \
+            spirv-tools spirv-headers libusb-1.0-0-dev \
+            libboost-dev libboost-fiber-dev libboost-context-dev \
+            libopus-dev libasound2-dev ccache \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 \
+            libxcb-shape0 libxcb-xinerama0 libxcb-xkb1
+
+      - name: Install Qt6 ARM64
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          host: linux_arm64
+          target: desktop
+          arch: linux_gcc_arm64
+          modules: qtcharts
+          cache: true
+
+      - name: Configure
+        run: |
+          set -euo pipefail
+          cmake -S . -B build/odin-oot-compile -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=OFF -DYUZU_TESTS=OFF \
+            -DYUZU_CMD=ON -DYUZU_ROOM=OFF -DYUZU_ROOM_STANDALONE=OFF \
+            -DYUZU_USE_BUNDLED_QT=OFF -DENABLE_QT_TRANSLATION=ON \
+            "-DCMAKE_PREFIX_PATH=$QT_ROOT_DIR" \
+            -DYUZU_USE_BUNDLED_SDL3=ON \
+            -DVulkanHeaders_FORCE_BUNDLED=ON \
+            -DVulkanUtilityLibraries_FORCE_BUNDLED=ON \
+            -DENABLE_UPDATE_CHECKER=OFF -DUSE_DISCORD_PRESENCE=OFF \
+            -DUSE_CCACHE=ON -DCMAKE_CXX_FLAGS=-Wno-error=shadow \
+            -DLICHII_BUILD_PLATFORM=linux-aarch64 \
+            -DLICHII_BUILD_TAG=odin-oot-hmma-lds-experiment
+
+      - name: Compile changed shader code
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/oot-shader-recompiler-build.log"
+          if cmake --build build/odin-oot-compile \
+            --target video_core --parallel 3 > "$log" 2>&1; then
+            echo "PASS: Native ARM64 shader recompiler compiled"
+            tail -n 12 "$log"
+          else
+            code=$?
+            echo "::error::Shader recompiler failed to compile"
+            tail -n 160 "$log"
+            exit "$code"
+          fi
+          find build/odin-oot-compile -path '*/libvideo_core.a' -type f \
+            -print -quit | grep -q libvideo_core.a
+
+      - name: Scope of result
+        run: |
+          echo "This confirms aarch64 C++ compile only."
+          echo "It does not validate SPIR-V, Turnip behavior, Ocarina FPS or game compatibility."
+          echo "No driver or production release is published."
