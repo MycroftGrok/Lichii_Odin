@@ -10,6 +10,8 @@ Usage: oot-low-demand.sh [--profile] [--aggressive] [-- Lichii arguments...]
 
   (no options)   Start experimental Lichii with reversible OOT-only low-demand mode.
   --profile      Also record GPU timestamps and capture the exact slow compute SPIR-V.
+  --hmma-lds     Opt-in software tensor/HMMA shared-memory substitution for the
+                 exact captured Ocarina shader. A/B test; NOT yet gameplay-validated.
   --aggressive   Optional UNSAFE-for-rendering A/B: skip one identified unused network
                  compute pass only after the No sharpening output bypass succeeds.
                  May cause visual errors; not proven on Odin.
@@ -23,9 +25,11 @@ HELP
 
 profile=0
 aggressive=0
+hmma_lds=0
 while (( $# )); do
     case "$1" in
         --profile) profile=1; shift ;;
+        --hmma-lds) hmma_lds=1; shift ;;
         --aggressive) aggressive=1; shift ;;
         --help|-h) usage; exit 0 ;;
         --) shift; break ;;
@@ -64,6 +68,7 @@ fi
 
 # These are runtime process variables; nothing is written to ~/.config or the game.
 export EDEN_NX2_OOT_LOW_DEMAND=1
+export EDEN_NX2_OOT_HMMA_LDS="$hmma_lds"
 export EDEN_NX2_OOT_SKIP_UNUSED_HEAVY="$aggressive"
 export VK_DRIVER_FILES="$icd"
 export QT_QPA_PLATFORM=wayland
@@ -83,7 +88,7 @@ echo "=== OOT ARM64 LOW-DEMAND EXPERIMENT ==="
 echo "Binary: $binary"
 echo "Driver: system Mesa Turnip"
 echo "Profile: low-demand (only title 0400486024DEC000)"
-echo "GPU trace: $profile; optional heavy-network bypass: $aggressive"
+echo "GPU trace: $profile; HMMA LDS: $hmma_lds; older optional heavy-network bypass: $aggressive"
 echo "Existing settings, save data and other games: unchanged"
 echo "Suggested per-game settings: Handheld mode, Vulkan, 1X scaling, NCE."
 echo "Select Ocarina inside the GUI and close Lichii normally at the end."
