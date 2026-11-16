@@ -2451,7 +2451,8 @@ void RasterizerVulkan::DispatchCompute() {
                          pipeline->ShaderHash(), native_key, qmd.grid_dim_x.Value(),
                          qmd.grid_dim_y.Value(), qmd.grid_dim_z.Value(),
                          qmd.block_dim_x.Value(), qmd.block_dim_y.Value(),
-                         indirect_address.has_value(), list_slot.has_value());
+                         qmd.block_dim_z.Value(), indirect_address.has_value(),
+                         list_slot.has_value());
             }
         }
     }
