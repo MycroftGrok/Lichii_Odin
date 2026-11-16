@@ -60,3 +60,35 @@ correctness and do not infer later-scene correctness.
 
 **Status:** source change only, not yet compiled or gameplay validated.
 The older 16 FPS package remains the known working fallback.
+
+## Follow-up test and compact-LDS correction (2026-11-16)
+
+The uploaded `oot-extra-compute-trace-20261116-173132.zip` showed
+the 192-op shader still receives LDS and runs at ~31.6ms median, but the
+176-op shader **did not activate LDS** and ran ~335.1ms median across four
+samples. The captured 176-op SPIR-V still contains 32 dynamic subgroup
+shuffle instructions; the original 192-op SPIR-V does not.
+
+The previously allocated scratch was `(invocations+128)*7*4` bytes:
+7168B, yielding a 12,800B total for the 176-op shader versus 12,288B
+for the previously working 192-op shader. The 176-op candidate may have
+exceeded the device's reported compute shared-memory limit by 512B;
+**the exact failed condition is not yet proven**. An explicit 176-op
+eligibility log has now been added to confirm this.
+
+The revised allocation has precisely `invocations*6` u32 words,
+as only six source words per invocation are ever stored and loaded.
+The address `SubgroupId*SubgroupSize+lane` is bounded by the number
+of invocations in a workgroup. At 128 invocations, scratch becomes
+3072B, reducing total shared-memory usage to **8704B for 176 ops** and
+**8192B for 192 ops**. Synchronization remains unchanged.
+Fresh cache variant: `~/.cache/lichii-oot-dual-hmma-lds-compact-v4`.
+Both shaders still require the opt-in `--hmma-lds` flag.
+
+**Unverified until native ARM64 compilation and gameplay**: test at
+the same Deku Tree dialogue and confirm the log contains both:
+`OOT HMMA LDS enabled: tensor_ops=192` and
+`OOT HMMA LDS enabled: tensor_ops=176`.
+Inspect `OOT HMMA LDS 176 eligibility` if the second is missing.
+Compare `s6:e40f5efb5480e692` against ~335ms.
+No changes to installed stable binary, game ROM, saves, or prior caches.
