@@ -162,6 +162,8 @@ Id TypeId(const EmitContext& ctx, IR::Type type) {
 
 void Traverse(EmitContext& ctx, IR::Program& program) {
     IR::Block* current_block{};
+    // Call only in the first entry block: calling after a branch or loop could precede OpPhi.
+    bool nx2_gmem_initialized{};
     for (const IR::AbstractSyntaxNode& node : program.syntax_list) {
         switch (node.type) {
         case IR::AbstractSyntaxNode::Type::Block: {
@@ -171,6 +173,10 @@ void Traverse(EmitContext& ctx, IR::Program& program) {
             }
             current_block = node.data.block;
             ctx.AddLabel(label);
+            if (!nx2_gmem_initialized && Sirit::ValidId(ctx.nx2_init_global_bases)) {
+                ctx.OpFunctionCall(ctx.void_id, ctx.nx2_init_global_bases);
+            }
+            nx2_gmem_initialized = true;
             for (IR::Inst& inst : node.data.block->Instructions()) {
                 EmitInst(ctx, &inst);
             }

@@ -395,6 +395,8 @@ public:
     /// The first routes among every bound storage buffer, the others among
     /// IR::Program::global_memory_routes
     std::vector<GlobalMemoryFunctions> global_memory_functions;
+    // Optional Adreno pointer-load optimization: initialized at the first entry block.
+    Id nx2_init_global_bases{};
     std::unordered_map<const IR::Inst*, u32> global_memory_route;
     [[nodiscard]] const GlobalMemoryFunctions& GlobalMemoryFunctionsOf(const IR::Inst& inst) const;
 

@@ -7,6 +7,9 @@
 #include <array>
 #include <bit>
 #include <climits>
+#include <atomic>
+#include <cstdlib>
+#include <ranges>
 #include <numeric>
 #include <span>
 
@@ -15,6 +18,7 @@
 #include <fmt/ranges.h>
 
 #include "common/common_types.h"
+#include "common/logging.h"
 #include "common/div_ceil.h"
 #include "shader_recompiler/backend/nvn_storage_descriptor.h"
 #include "shader_recompiler/backend/spirv/emit_spirv.h"
@@ -1110,6 +1114,29 @@ void EmitContext::DefineGlobalMemoryFunctions(const IR::Program& program) {
     GlobalMemoryFunctions* functions{};
     using DefPtr = Id StorageDefinitions::*;
     const Id zero{u32_zero_value};
+    // Adapted from Eden NX2 Android's Ocarina global-memory-base optimization.
+    // Explicit opt-in until validated with native ArmadaOS/Turnip and the guest game.
+    static const bool gmem_hoist_requested{[] {
+        const char* const value{std::getenv("EDEN_NX2_GMEM_HOIST")};
+        return value != nullptr && value[0] == '1';
+    }()};
+    const bool nx2_hoist{gmem_hoist_requested && info.native_global_bounds &&
+                         stage != Stage::Compute && stage != Stage::Task &&
+                         stage != Stage::Mesh &&
+                         !info.storage_buffers_descriptors.empty() &&
+                         std::ranges::none_of(info.storage_buffers_descriptors,
+                                              [](const auto& desc) { return desc.is_written; }) &&
+                         std::ranges::none_of(program.blocks, [](const IR::Block* block) {
+                             return std::ranges::any_of(block->Instructions(),
+                                                        [](const IR::Inst& inst) {
+                                 const IR::Opcode op{inst.GetOpcode()};
+                                 return (op >= IR::Opcode::WriteGlobalU8 &&
+                                         op <= IR::Opcode::WriteGlobal128) ||
+                                        (op >= IR::Opcode::GlobalAtomicIAdd32 &&
+                                         op <= IR::Opcode::GlobalAtomicMaxF32x2);
+                             });
+                         })};
+    std::vector<Id> nx2_base_vars;
     // The buffer a routed access goes through can differ between invocations, so a pointer chosen
     // per invocation and the element pointers derived from it are NonUniform.
     const auto element{[&](Id pointer_type, Id ssbo, Id index) {
@@ -1130,43 +1157,58 @@ void EmitContext::DefineGlobalMemoryFunctions(const IR::Program& program) {
     // index, and one access goes through them: loads take no branch, and stores and atomics take
     // one for an address no buffer holds. Otherwise the access takes one branch per candidate
     // buffer, and every branch merges back so the helper returns once, from its last block.
+    // Use identical address computation in helper and one-time private-variable initializer.
+    const u64 ssbo_align_mask{~(profile.min_ssbo_alignment - 1U)};
+    const auto base_address{[&](size_t index) {
+        const auto& ssbo{info.storage_buffers_descriptors[index]};
+        const Id words{EmitGetCbufU32x2(*this, IR::Value{ssbo.cbuf_index},
+                                       IR::Value{ssbo.cbuf_offset})};
+        if (ssbo.indirect_offset == ~0U) {
+            return OpBitwiseAnd(U64, OpBitcast(U64, words), Constant(U64, ssbo_align_mask));
+        }
+        // The pointer is read through the buffer bound for the constant buffer pointer.
+        const auto holder{std::ranges::find_if(
+            info.storage_buffers_descriptors, [&ssbo](const auto& desc) {
+                return desc.cbuf_index == ssbo.cbuf_index &&
+                       desc.cbuf_offset == ssbo.cbuf_offset && desc.indirect_offset == ~0U;
+            })};
+        if (holder == info.storage_buffers_descriptors.end()) {
+            return Constant(U64, ~u64{0});
+        }
+        const size_t holder_index{static_cast<size_t>(
+            std::distance(info.storage_buffers_descriptors.begin(), holder))};
+        const Id holder_low{OpCompositeExtract(U32[1], words, 0U)};
+        const Id byte{OpIAdd(U32[1],
+                             OpBitwiseAnd(U32[1], holder_low,
+                                          Const(static_cast<u32>(profile.min_ssbo_alignment - 1))),
+                             Const(ssbo.indirect_offset))};
+        const Id word_index{OpShiftRightLogical(U32[1], byte, Const(2U))};
+        const Id storage{ssbos[holder_index].U32};
+        const auto load_word{[&](Id word) {
+            return OpLoad(U32[1], OpAccessChain(storage_types.U32.element, storage, zero, word));
+        }};
+        const Id pointer_words{OpCompositeConstruct(
+            U32[2], load_word(word_index), load_word(OpIAdd(U32[1], word_index, Const(1U))))};
+        return OpBitwiseAnd(U64, OpBitcast(U64, pointer_words), Constant(U64, ssbo_align_mask));
+    }};
+    if (nx2_hoist) {
+        const Id u64_private{TypePointer(spv::StorageClass::Private, U64)};
+        for (size_t index = 0; index < info.storage_buffers_descriptors.size(); ++index) {
+            nx2_base_vars.push_back(AddGlobalVariable(u64_private, spv::StorageClass::Private));
+        }
+        if (profile.supported_spirv >= 0x00010400) {
+            interfaces.insert(interfaces.end(), nx2_base_vars.begin(), nx2_base_vars.end());
+        }
+        static std::atomic<u32> logged{};
+        if (logged.fetch_add(1, std::memory_order_relaxed) < 8) {
+            LOG_INFO(Shader_SPIRV, "NX2 GMEM hoist: enabled for graphics shader ({} buffers)",
+                     nx2_base_vars.size());
+        }
+    }
     const auto define_body{[&](DefPtr ssbo_member, Id addr, const StorageTypeDefinition& type_def,
                                u32 shift, Id result_type, Id fallback, Routing routing,
                                auto&& callback) -> Id {
         const Id header_label{AddLabel()};
-        const u64 ssbo_align_mask{~(profile.min_ssbo_alignment - 1U)};
-        const auto base_address{[&](size_t index) {
-            const auto& ssbo{info.storage_buffers_descriptors[index]};
-            const Id words{EmitGetCbufU32x2(*this, IR::Value{ssbo.cbuf_index},
-                                           IR::Value{ssbo.cbuf_offset})};
-            if (ssbo.indirect_offset == ~0U) {
-                return OpBitwiseAnd(U64, OpBitcast(U64, words), Constant(U64, ssbo_align_mask));
-            }
-            // The pointer is read through the buffer bound for the constant buffer pointer.
-            const auto holder{std::ranges::find_if(
-                info.storage_buffers_descriptors, [&ssbo](const auto& desc) {
-                    return desc.cbuf_index == ssbo.cbuf_index &&
-                           desc.cbuf_offset == ssbo.cbuf_offset && desc.indirect_offset == ~0U;
-                })};
-            if (holder == info.storage_buffers_descriptors.end()) {
-                return Constant(U64, ~u64{0});
-            }
-            const size_t holder_index{static_cast<size_t>(
-                std::distance(info.storage_buffers_descriptors.begin(), holder))};
-            const Id holder_low{OpCompositeExtract(U32[1], words, 0U)};
-            const Id byte{OpIAdd(U32[1],
-                                 OpBitwiseAnd(U32[1], holder_low,
-                                              Const(static_cast<u32>(profile.min_ssbo_alignment - 1))),
-                                 Const(ssbo.indirect_offset))};
-            const Id word_index{OpShiftRightLogical(U32[1], byte, Const(2U))};
-            const Id storage{ssbos[holder_index].U32};
-            const auto load_word{[&](Id word) {
-                return OpLoad(U32[1], OpAccessChain(storage_types.U32.element, storage, zero, word));
-            }};
-            const Id pointer_words{OpCompositeConstruct(
-                U32[2], load_word(word_index), load_word(OpIAdd(U32[1], word_index, Const(1U))))};
-            return OpBitwiseAnd(U64, OpBitcast(U64, pointer_words), Constant(U64, ssbo_align_mask));
-        }};
         std::vector<u32> candidates;
         std::vector<Id> bases;
         Id route{Const(~0U)};
@@ -1177,7 +1219,8 @@ void EmitContext::DefineGlobalMemoryFunctions(const IR::Program& program) {
             // whose base is the closest one at or below it (bounds come from the binding).
             Id best_distance{Constant(U64, ~u64{0})};
             for (const u32 index : buffers) {
-                const Id base{base_address(index)};
+                const Id base{nx2_hoist ? OpLoad(U64, nx2_base_vars[index])
+                                        : base_address(index)};
                 const Id distance{OpISub(U64, addr, base)};
                 const Id better{OpLogicalAnd(U1, OpUGreaterThanEqual(U1, addr, base),
                                              OpULessThan(U1, distance, best_distance))};
@@ -1520,6 +1563,19 @@ void EmitContext::DefineGlobalMemoryFunctions(const IR::Program& program) {
         if (use.compare_exchange) {
             functions->compare_exchange_u32 = define_compare_exchange();
         }
+    }
+    if (nx2_hoist) {
+        // One initialization per graphics invocation. Exclude compute/task/mesh because the
+        // Android prototype found Turnip compiler crashes when hoisting those stages.
+        const Id init{OpFunction(void_id, spv::FunctionControlMask::MaskNone,
+                                 TypeFunction(void_id))};
+        AddLabel();
+        for (size_t index = 0; index < nx2_base_vars.size(); ++index) {
+            OpStore(nx2_base_vars[index], base_address(index));
+        }
+        OpReturn();
+        OpFunctionEnd();
+        nx2_init_global_bases = init;
     }
 }
 
