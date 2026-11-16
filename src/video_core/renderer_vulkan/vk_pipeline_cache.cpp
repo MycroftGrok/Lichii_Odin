@@ -474,7 +474,15 @@ vk::ShaderModule EmitComputeModule(const Device& device, const Shader::Profile& 
 
     // Text log + .spv dump. Same split as the graphics path.
     const bool should_log = GPU::Logging::IsActive();
-    const bool should_dump = Settings::values.gpu_log_shader_dumps.GetValue();
+    // Capture exactly the Ocarina shader measured at ~370 ms on Adreno 830.
+    // Opt-in; no full shader dump, cache reset or graphics setting changes.
+    static const bool trace_slow_compute{[] {
+        const char* const value = std::getenv("EDEN_NX2_OOT_SLOW_COMPUTE_TRACE");
+        return value != nullptr && value[0] == '1';
+    }()};
+    constexpr u64 slow_hash = 0x03bf0ffc7d2d0bedULL;
+    const bool targeted_dump = trace_slow_compute && shader_hash == slow_hash;
+    const bool should_dump = Settings::values.gpu_log_shader_dumps.GetValue() || targeted_dump;
     if (should_log || should_dump) {
         const std::string shader_name = fmt::format("shader_{:016x}_compute", shader_hash);
         if (should_log) {
@@ -485,6 +493,11 @@ vk::ShaderModule EmitComputeModule(const Device& device, const Shader::Profile& 
         if (should_dump) {
             GPU::Logging::DumpSpirvShader(shader_hash,
                                           std::span<const u32>(code.data(), code.size()));
+            if (targeted_dump) {
+                LOG_INFO(Render_Vulkan,
+                         "NX2 OOT slow compute captured SPIR-V hash={:016x} words={} (Eden DumpDir)",
+                         shader_hash, code.size());
+            }
         }
     }
 
@@ -3451,6 +3464,15 @@ ComputePipelineCacheEntry PipelineCache::CreateComputePipeline(
     }
 
     auto program{TranslateProgram(pools.inst, pools.block, env, cfg, host_info)};
+    if (key.unique_hash == 0x03bf0ffc7d2d0bedULL &&
+        std::getenv("EDEN_NX2_OOT_SLOW_COMPUTE_TRACE") != nullptr) {
+        LOG_INFO(Render_Vulkan,
+                 "NX2 OOT slow compute IR hash={:016x} workgroup={}x{}x{} shared_bytes={} "
+                 "ssbos={} global_memory={}",
+                 key.unique_hash, program.workgroup_size[0], program.workgroup_size[1],
+                 program.workgroup_size[2], program.shared_memory_size,
+                 program.info.storage_buffers_descriptors.size(), program.info.uses_global_memory);
+    }
     const VkDriverIdKHR driver_id = device.GetDriverID();
     const bool needs_shared_mem_clamp =
         driver_id == VK_DRIVER_ID_QUALCOMM_PROPRIETARY ||

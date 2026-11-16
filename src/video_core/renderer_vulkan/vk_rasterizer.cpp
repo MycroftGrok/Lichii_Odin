@@ -2436,6 +2436,24 @@ void RasterizerVulkan::DispatchCompute() {
     }
 
     const auto& qmd{kepler_compute->launch_description};
+    if (pipeline->ShaderHash() == 0x03bf0ffc7d2d0bedULL) {
+        static const bool trace_slow = [] {
+            const char* const value = std::getenv("EDEN_NX2_OOT_SLOW_COMPUTE_TRACE");
+            return value != nullptr && value[0] == '1';
+        }();
+        if (trace_slow) {
+            static std::atomic<u32> logged{};
+            if (logged.fetch_add(1, std::memory_order_relaxed) < 8) {
+                LOG_INFO(Render_Vulkan,
+                         "NX2 OOT slow compute dispatch hash={:016x} grid={}x{}x{} "
+                         "block={}x{}x{} indirect={} list_slot={}",
+                         pipeline->ShaderHash(), qmd.grid_dim_x.Value(),
+                         qmd.grid_dim_y.Value(), qmd.grid_dim_z.Value(),
+                         qmd.block_dim_x.Value(), qmd.block_dim_y.Value(),
+                         indirect_address.has_value(), list_slot.has_value());
+            }
+        }
+    }
     const auto publish_collision_map = [&] {
         if (native_key != 0x6e0ae200ee9aa220ULL ||
             (qmd.const_buffer_enable_mask & 1) == 0) {
