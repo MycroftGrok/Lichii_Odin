@@ -67,6 +67,20 @@ if [[ ! -f "$icd" ]]; then
 fi
 
 # These are runtime process variables; nothing is written to ~/.config or the game.
+# Avoid reusing the stable game's compiled shader cache for a different HMMA
+# translation. XDG_CACHE_HOME controls EdenPath::ShaderDir on Linux; no cache
+# folders are deleted and the normal game's cache stays untouched.
+if (( hmma_lds )); then
+    export XDG_CACHE_HOME="$HOME/.cache/lichii-oot-hmma-lds-experiment-v1"
+    mkdir -p -- "$XDG_CACHE_HOME"
+    original="$HOME/.local/share/lichii/dump/0400486024dec000_03bf0ffc7d2d0bed.spv"
+    saved="$HOME/Development/turnip-a830-drm/oot-hmma-lds-original/0400486024dec000_03bf0ffc7d2d0bed.spv"
+    if [[ -s "$original" && ! -e "$saved" ]]; then
+        mkdir -p -- "$(dirname -- "$saved")"
+        cp -n -- "$original" "$saved"
+        echo "Preserved pre-LDS diagnostic SPIR-V at: $saved"
+    fi
+fi
 export EDEN_NX2_OOT_LOW_DEMAND=1
 export EDEN_NX2_OOT_HMMA_LDS="$hmma_lds"
 export EDEN_NX2_OOT_SKIP_UNUSED_HEAVY="$aggressive"
