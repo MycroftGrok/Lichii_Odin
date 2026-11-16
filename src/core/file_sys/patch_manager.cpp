@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstdlib>
 #include <cstring>
 #include <optional>
 #include <span>
@@ -616,6 +617,20 @@ std::vector<std::string> PatchManager::GetDisabledAddons() const {
     if (parent_title_id) {
         const auto& shared = Settings::values.disabled_addons[*parent_title_id];
         disabled.insert(disabled.end(), shared.begin(), shared.end());
+    }
+    // Reversible Odin 3 OOT low-load profile: the game's dynamic render scale can work
+    // instead of the built-in Max Resolution forced-full-size patch. The doubled texture
+    // pool is unnecessary for this mode. Do not write any persistent Add-Ons settings.
+    static const bool oot_low_demand = [] {
+        const char* const env = std::getenv("EDEN_NX2_OOT_LOW_DEMAND");
+        return env != nullptr && env[0] == '1';
+    }();
+    if (oot_low_demand && title_id == 0x0400486024DEC000ULL) {
+        for (const char* name : {MAX_RESOLUTION_NAME, "Texture Pool x2 (built-in)"}) {
+            if (std::find(disabled.begin(), disabled.end(), name) == disabled.end()) {
+                disabled.emplace_back(name);
+            }
+        }
     }
     return disabled;
 }

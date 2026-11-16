@@ -5,6 +5,7 @@
 
 #include <array>
 #include <atomic>
+#include <cstdlib>
 #include <mutex>
 
 #include "common/common_types.h"
@@ -24,6 +25,10 @@ constexpr u64 ProgramId = 0x0400486024DEC000ULL;
 // Native program keys of the network's compute passes.
 constexpr u64 PrepassProgramKey = 0x8475d671e6967428ULL;
 constexpr u64 NetworkProgramKey = 0x42593194bb0b2b32ULL;
+// This dispatch ran before the original network in the measured 1.1.1 update. Its
+// output is unused when No sharpening successfully replaces the output pass.
+// Do not bypass it except with a separate explicit experimental flag.
+constexpr u64 HeavyProgramKey = 0xd9ee412f00ce399aULL;
 constexpr u64 OutputProgramKey = 0xda6df3e54c716df2ULL;
 
 // Base v65536 output passes sample cb0+0xc0 and store to cb0+0xd0. Match them
@@ -64,9 +69,26 @@ struct BypassState {
     std::atomic<bool> output_replaced{}; ///< the latest output pass was replaced
 };
 
+inline bool LowDemandEnabled() {
+    static const bool enabled = [] {
+        const char* const env = std::getenv("EDEN_NX2_OOT_LOW_DEMAND");
+        return env != nullptr && env[0] == '1';
+    }();
+    return enabled;
+}
+
+inline bool SkipUnusedHeavyEnabled() {
+    static const bool enabled = [] {
+        const char* const env = std::getenv("EDEN_NX2_OOT_SKIP_UNUSED_HEAVY");
+        return env != nullptr && env[0] == '1';
+    }();
+    return enabled;
+}
+
 inline bool BypassEnabled(u64 program_id) {
     return program_id == ProgramId &&
-           Settings::values.oot_anti_aliasing.GetValue() == Settings::OotAntiAliasing::NoSharpening;
+           (LowDemandEnabled() ||
+            Settings::values.oot_anti_aliasing.GetValue() == Settings::OotAntiAliasing::NoSharpening);
 }
 
 } // namespace VideoCommon::OotNetwork

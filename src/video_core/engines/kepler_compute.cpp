@@ -1251,6 +1251,18 @@ bool KeplerCompute::BypassOotNetwork(u64 program_id, u64 native_key) {
     if (native_key == PrepassProgramKey || native_key == NetworkProgramKey) {
         return bypass->output_replaced.load(std::memory_order_relaxed);
     }
+    // Separate, aggressive A/B switch. Disabled in the low-demand profile by default.
+    // Only the known native program, with the bypass already replacing its output,
+    // can be omitted. Never drop all compute workloads or unknown game revisions.
+    if (native_key == HeavyProgramKey && LowDemandEnabled() && SkipUnusedHeavyEnabled() &&
+        bypass->output_replaced.load(std::memory_order_relaxed)) {
+        static std::atomic<u32> skip_count{};
+        if ((skip_count.fetch_add(1, std::memory_order_relaxed) & 255U) == 0) {
+            LOG_INFO(HW_GPU, "OOT low-demand experimental: skipped unused heavy native program "
+                             "{:016x}", native_key);
+        }
+        return true;
+    }
     const bool base_output = std::ranges::find(BaseOutputPrograms, native_key,
                                               &BaseOutputProgram::key) != BaseOutputPrograms.end();
     if (native_key != OutputProgramKey && !base_output) {

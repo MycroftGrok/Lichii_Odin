@@ -3371,7 +3371,10 @@ void RasterizerVulkan::TracePendingCpuWrites(bool compute, std::span<const u64> 
 
 bool RasterizerVulkan::OcarinaTemporalEnabled() const {
     constexpr u64 ocarina_program = 0x0400486024DEC000ULL;
-    if (program_id != ocarina_program || oot_live_failed) {
+    if (program_id != ocarina_program || oot_live_failed ||
+        VideoCommon::OotNetwork::LowDemandEnabled()) {
+        // The low-demand mode uses the game's native output rather than running a
+        // second temporal FSR/DLSS replacement; existing per-game settings are untouched.
         return false;
     }
     if (oot_backend) {
