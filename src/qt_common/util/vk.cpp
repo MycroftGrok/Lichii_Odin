@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// SPDX-FileCopyrightText: 2023 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <utility>
@@ -24,9 +23,11 @@ class QWindow;
 
 namespace VkDeviceInfo {
 Record::Record(std::string_view name_, const std::vector<VkPresentModeKHR>& vsync_modes_,
-               bool has_broken_compute_, bool fsr4_capable_)
+               bool has_broken_compute_, bool fsr4_capable_,
+               std::uint64_t local_heap_bytes_, bool integrated_gpu_)
     : name{name_}, vsync_support{vsync_modes_}, has_broken_compute{has_broken_compute_},
-      fsr4_capable{fsr4_capable_} {}
+      fsr4_capable{fsr4_capable_}, local_heap_bytes{local_heap_bytes_},
+      integrated_gpu{integrated_gpu_} {}
 
 Record::~Record() = default;
 
@@ -67,8 +68,24 @@ void PopulateRecords(std::vector<Record>& records, QWindow* window) try {
         bool has_broken_compute{
             Vulkan::Device::CheckBrokenCompute(driverID, properties.properties.driverVersion)};
 
+#if defined(__linux__) && !defined(__ANDROID__)
+        VkPhysicalDeviceShaderIntegerDotProductProperties dot_properties{};
+        dot_properties.sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_INTEGER_DOT_PRODUCT_PROPERTIES;
+        if (properties.properties.apiVersion >= VK_API_VERSION_1_3) {
+            VkPhysicalDeviceProperties2 dot_query{};
+            dot_query.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+            dot_query.pNext = &dot_properties;
+            dld.vkGetPhysicalDeviceProperties2(physical_device, &dot_query);
+        }
+        const bool fsr4_capable = VideoCommon::IsFsr4PortGpu(
+            properties.properties.vendorID, properties.properties.deviceID,
+            driverID == VK_DRIVER_ID_MESA_RADV,
+            dot_properties.integerDotProduct4x8BitPackedMixedSignednessAccelerated != VK_FALSE);
+#else
         const bool fsr4_capable = VideoCommon::IsFsr4CapableGpu(
             properties.properties.vendorID, driverID == VK_DRIVER_ID_AMD_PROPRIETARY, name);
+#endif
 
         std::string driver_string = Vulkan::vk::GetDriverName(driver_properties);
 
@@ -77,8 +94,16 @@ void PopulateRecords(std::vector<Record>& records, QWindow* window) try {
 
         name = fmt::format("{} ({})", name, driver_string);
 
-        records.push_back(
-            VkDeviceInfo::Record(name, present_modes, has_broken_compute, fsr4_capable));
+        const auto memory = physical_device.GetMemoryProperties().memoryProperties;
+        std::uint64_t local_heap_bytes = 0;
+        for (u32 heap = 0; heap < memory.memoryHeapCount; ++heap) {
+            if ((memory.memoryHeaps[heap].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0)
+                local_heap_bytes += memory.memoryHeaps[heap].size;
+        }
+        const bool integrated_gpu =
+            properties.properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU;
+        records.push_back(VkDeviceInfo::Record(name, present_modes, has_broken_compute,
+                                                fsr4_capable, local_heap_bytes, integrated_gpu));
     }
 } catch (const Vulkan::vk::Exception& exception) {
     LOG_ERROR(Frontend, "Failed to enumerate devices with error: {}", exception.what());

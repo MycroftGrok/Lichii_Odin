@@ -1,0 +1,16 @@
+diff --git a/src/joystick/hidapi/SDL_hidapijoystick.c b/src/joystick/hidapi/SDL_hidapijoystick.c
+--- a/src/joystick/hidapi/SDL_hidapijoystick.c
++++ b/src/joystick/hidapi/SDL_hidapijoystick.c
+@@ -1411,7 +1411,11 @@
+ {
+     if (HIDAPI_StartUpdatingDevices()) {
+         Uint32 count = SDL_hid_device_change_count();
+-        if (SDL_HIDAPI_change_count != count) {
++        // Toolbox can miss host udev notifications. The Lichii input subsystem
++        // sets this hint for one HID scan when idle, not during gameplay.
++        // Do not poll expensive HID enumeration in the normal event loop.
++        bool force_idle = SDL_GetHintBoolean("LICHII_IDLE_HIDAPI_REFRESH", false);
++        if (SDL_HIDAPI_change_count != count || force_idle) {
+             SDL_HIDAPI_change_count = count;
+             HIDAPI_UpdateDeviceList();
+         }

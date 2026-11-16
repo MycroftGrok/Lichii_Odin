@@ -1,0 +1,77 @@
+name: NX2 Release Installer Smoke Test
+
+on:
+  pull_request:
+    branches: [odin-armadaos]
+    paths:
+      - "scripts/install-nx2-odin.py"
+      - ".github/workflows/nx2-release-installer-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-fresh-install:
+    name: ARM64 isolated first-install and reinstall checks
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Check out NX2 source
+        uses: actions/checkout@v5
+
+      - name: Verify native ARM64 and installer syntax
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "aarch64"
+          python3 -m py_compile scripts/install-nx2-odin.py
+          bash -n scripts/launch-odin.sh
+
+      - name: Exercise published release installer in isolated HOME
+        run: |
+          set -euo pipefail
+          export HOME="$RUNNER_TEMP/lichii-nx2-clean-home"
+          export PATH="$RUNNER_TEMP/lichii-nx2-fake-bin:$PATH"
+          mkdir -p "$HOME" "$RUNNER_TEMP/lichii-nx2-fake-bin"
+          # Fake only toolbox presence and the runtime ldd probe. This job
+          # verifies installation and packaging, NOT hardware compatibility.
+          cat > "$RUNNER_TEMP/lichii-nx2-fake-bin/toolbox" <<'MOCK'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          if [[ "${1:-}" == "list" && "${2:-}" == "--containers" ]]; then
+              echo "lichii-debug"
+          elif [[ "${1:-}" == "run" && "${2:-}" == "--container" &&
+                  "${3:-}" == "lichii-debug" && "${4:-}" == "ldd" ]]; then
+              echo "MOCK: runtime dependencies must still be validated on ArmadaOS"
+          else
+              echo "Unexpected toolbox call: $*" >&2
+              exit 2
+          fi
+          MOCK
+          chmod +x "$RUNNER_TEMP/lichii-nx2-fake-bin/toolbox"
+
+          echo "=== Fresh install from public release ==="
+          python3 scripts/install-nx2-odin.py
+          bin="$HOME/Applications/Lichii/bin/lichii-odin"
+          test -L "$bin"
+          test -x "$bin"
+          readelf -h "$bin" | grep -q 'Machine:.*AArch64'
+          bash -n "$HOME/.local/bin/lichii-odin"
+          test -f "$HOME/.local/share/lichii/tools/steam-integration.py"
+          test -f "$HOME/.local/share/lichii/tools/steam_artwork.py"
+          test -f "$HOME/Applications/Lichii/source/scripts/launch-odin.sh"
+          test ! -e "$HOME/.local/share/lichii/lossless/Lossless.dll"
+
+          echo "=== Reinstall does not replace active executable ==="
+          before="$(sha256sum "$bin" | cut -d' ' -f1)"
+          target="$(readlink "$bin")"
+          python3 scripts/install-nx2-odin.py
+          test "$(sha256sum "$bin" | cut -d' ' -f1)" = "$before"
+          test "$(readlink "$bin")" = "$target"
+          echo "PASS: Fresh staging, checksum, ARM64 ELF, helpers, launcher, and non-overwrite"
+
+      - name: Explain validation limits
+        if: always()
+        run: |
+          echo "Isolated ARM64 runner verified packaging and installer flow."
+          echo "It did NOT establish real Toolbox dependencies, Vulkan, InputPlumber or game launch."
+          echo "Fresh-device ArmadaOS smoke testing remains necessary."

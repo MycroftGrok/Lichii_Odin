@@ -291,6 +291,15 @@ struct InputSubsystem::Impl {
         return false;
     }
 
+    std::string GetDeviceWarning([[maybe_unused]] const Common::ParamPackage& params) const {
+#ifdef HAVE_SDL3
+        if (params.Get("engine", "") == sdl->GetEngineName()) {
+            return sdl->GetSilenceWarning(params);
+        }
+#endif
+        return {};
+    }
+
     void BeginConfiguration() {
         keyboard->BeginConfiguration();
         mouse->BeginConfiguration();
@@ -469,6 +478,10 @@ bool InputSubsystem::IsStickInverted(const Common::ParamPackage& params) const {
     return false;
 }
 
+std::string InputSubsystem::GetDeviceWarning(const Common::ParamPackage& device) const {
+    return impl->GetDeviceWarning(device);
+}
+
 void InputSubsystem::ReloadInputDevices() {
     impl->udp_client.get()->ReloadSockets();
 }
@@ -487,8 +500,23 @@ void InputSubsystem::StopMapping() const {
     impl->mapping_factory->StopMapping();
 }
 
-void InputSubsystem::PumpEvents() const {
+void InputSubsystem::PumpEvents(bool idle_rescan) const {
+#ifdef HAVE_SDL3
+    // A Toolbox container may miss host udev HID notifications. Enable the
+    // bundled SDL3's scoped re-enumeration only during idle routing checks.
+    if (idle_rescan)
+        SDL_SetHint("LICHII_IDLE_HIDAPI_REFRESH", "1");
+#endif
     impl->PumpEvents();
+#ifdef HAVE_SDL3
+    if (idle_rescan) {
+        SDL_UpdateJoysticks();
+        SDL_PumpEvents();
+        SDL_SetHint("LICHII_IDLE_HIDAPI_REFRESH", "0");
+    }
+#else
+    (void)idle_rescan;
+#endif
 }
 
 std::string GenerateKeyboardParam(int key_code) {

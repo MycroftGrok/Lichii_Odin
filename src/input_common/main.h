@@ -152,6 +152,9 @@ public:
     /// Returns true if axis of a stick aren't mapped in the correct direction
     [[nodiscard]] bool IsStickInverted(const Common::ParamPackage& device) const;
 
+    /// Why the device does nothing, when its driver can tell. Empty otherwise.
+    [[nodiscard]] std::string GetDeviceWarning(const Common::ParamPackage& device) const;
+
     /// Reloads the input devices.
     void ReloadInputDevices();
 
@@ -164,8 +167,8 @@ public:
     /// Stop polling from all backends.
     void StopMapping() const;
 
-    /// Signals SDL driver for new input events
-    void PumpEvents() const;
+    /// Signals SDL driver; optionally requests one HID rescan while idle.
+    void PumpEvents(bool idle_rescan = false) const;
 
 private:
     struct Impl;

@@ -263,7 +263,9 @@
         "min_version": "3.2.10",
         "package": "SDL3",
         "repo": "libsdl-org/SDL",
-        "version": "release-3.4.8"
+        "version": "release-3.4.8",
+        "patches": ["armada-inputplumber-deck-uhid-12f0.patch",
+                    "armada-toolbox-idle-hidapi-reprobe.patch"]
     },
     "sdl3-ci": {
         "ci": true,

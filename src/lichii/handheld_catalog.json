@@ -1,0 +1,211 @@
+{
+  "schema_version": 1,
+  "description": "Versioned Snapdragon handheld catalog. Unknown models retain Lichii stock settings. Model-specific presets are written separately by the user.",
+  "chipsets": [
+    {
+      "id": "snapdragon-8-elite",
+      "name": "Qualcomm Snapdragon 8 Elite",
+      "gpu": "Adreno 830",
+      "handhelds": [
+        {
+          "id": "ayn-odin-3",
+          "manufacturer": "AYN",
+          "handheld": "Odin 3",
+          "aliases": [
+            "AYN Odin3",
+            "AYN Odin 3",
+            "Odin3 Gamepad",
+            "Odin 3 Gamepad"
+          ],
+          "models": [
+            {
+              "id": "base",
+              "name": "Base",
+              "ram_gib": 8
+            },
+            {
+              "id": "pro",
+              "name": "Pro",
+              "ram_gib": 12
+            },
+            {
+              "id": "max",
+              "name": "Max",
+              "ram_gib": 16
+            },
+            {
+              "id": "ultra",
+              "name": "Ultra",
+              "ram_gib": 24
+            }
+          ],
+          "default_settings": {}
+        }
+      ]
+    },
+    {
+      "id": "snapdragon-8-gen-2",
+      "name": "Qualcomm Snapdragon 8 Gen 2",
+      "gpu": "Adreno 740",
+      "handhelds": [
+        {
+          "id": "ayn-odin-2-portal",
+          "manufacturer": "AYN",
+          "handheld": "Odin 2 Portal",
+          "aliases": [
+            "Odin2 Portal",
+            "Odin 2 Portal"
+          ],
+          "models": [
+            {
+              "id": "base",
+              "name": "Base",
+              "ram_gib": 8
+            },
+            {
+              "id": "pro",
+              "name": "Pro",
+              "ram_gib": 12
+            },
+            {
+              "id": "max",
+              "name": "Max",
+              "ram_gib": 16
+            }
+          ],
+          "default_settings": {}
+        },
+        {
+          "id": "ayn-odin-2-mini",
+          "manufacturer": "AYN",
+          "handheld": "Odin 2 Mini",
+          "aliases": [
+            "Odin2 Mini",
+            "Odin 2 Mini"
+          ],
+          "models": [
+            {
+              "id": "base",
+              "name": "Base",
+              "ram_gib": 8
+            },
+            {
+              "id": "pro",
+              "name": "Pro",
+              "ram_gib": 12
+            }
+          ],
+          "default_settings": {}
+        },
+        {
+          "id": "ayn-odin-2",
+          "manufacturer": "AYN",
+          "handheld": "Odin 2",
+          "aliases": [
+            "AYN Odin2",
+            "AYN Odin 2",
+            "Odin2 Gamepad",
+            "Odin 2 Gamepad"
+          ],
+          "models": [
+            {
+              "id": "base",
+              "name": "Base",
+              "ram_gib": 8
+            },
+            {
+              "id": "pro",
+              "name": "Pro",
+              "ram_gib": 12
+            },
+            {
+              "id": "max",
+              "name": "Max",
+              "ram_gib": 16
+            }
+          ],
+          "default_settings": {}
+        },
+        {
+          "id": "ayn-thor",
+          "manufacturer": "AYN",
+          "handheld": "Thor",
+          "aliases": [
+            "AYN Thor",
+            "Thor Gamepad"
+          ],
+          "models": [
+            {
+              "id": "base",
+              "name": "Base",
+              "ram_gib": 8
+            },
+            {
+              "id": "pro",
+              "name": "Pro",
+              "ram_gib": 12
+            },
+            {
+              "id": "max",
+              "name": "Max",
+              "ram_gib": 16
+            }
+          ],
+          "default_settings": {}
+        }
+      ]
+    },
+    {
+      "id": "snapdragon-865",
+      "name": "Qualcomm Snapdragon 865",
+      "gpu": "Adreno 650",
+      "handhelds": [
+        {
+          "id": "ayn-thor-lite",
+          "manufacturer": "AYN",
+          "handheld": "Thor Lite",
+          "aliases": [
+            "AYN Thor Lite",
+            "Thor Lite Gamepad"
+          ],
+          "models": [
+            {
+              "id": "lite",
+              "name": "Lite",
+              "ram_gib": 8
+            }
+          ],
+          "default_settings": {}
+        },
+        {
+          "id": "retroid-pocket-5",
+          "manufacturer": "Retroid",
+          "handheld": "Pocket 5",
+          "aliases": [
+            "Retroid Pocket 5",
+            "RP5 Gamepad"
+          ],
+          "models": [
+            {
+              "id": "standard-8gb",
+              "name": "8 GB SKU",
+              "ram_gib": 8
+            },
+            {
+              "id": "standard-12gb",
+              "name": "12 GB SKU",
+              "ram_gib": 12
+            }
+          ],
+          "default_settings": {}
+        }
+      ]
+    }
+  ],
+  "safety": {
+    "ambiguity": "Do not apply a preset unless handheld family and model variant are both established.",
+    "controller_mapping": "Never apply controller mappings from this catalog. Assign controllers using controller-routing preferences.",
+    "stock_defaults": "Empty default_settings intentionally preserve stock Lichii behavior until a user saves a personal preset.",
+    "profile_writes": "User presets are stored under ~/.config/lichii/handheld-presets as whitelisted settings only."
+  }
+}
