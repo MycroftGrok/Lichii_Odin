@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <optional>
 #include <span>
 #include <vector>
@@ -11,6 +12,8 @@
 #include "shader_recompiler/backend/spirv/emit_spirv_instructions.h"
 #include "shader_recompiler/backend/spirv/spirv_emit_context.h"
 #include "common/common_types.h"
+#include "common/logging.h"
+#include "common/settings.h"
 #include "shader_recompiler/frontend/ir/program.h"
 
 namespace Shader::Backend::SPIRV {
@@ -256,14 +259,77 @@ void DefineSoftwareMatrixFunctions(EmitContext& ctx, const IR::Program& program)
             DefineCooperativeHmmaTypes(ctx, ctx.U32[1], 8, ctx.profile.supported_spirv);
     }
     std::array<bool, 2> needed{};
+    u32 tensor_ops{};
     for (const auto* block : program.blocks) {
         for (const auto& inst : block->Instructions()) {
             if (inst.GetOpcode() != IR::Opcode::TensorMulAdd || inst.Flags<u32>() == 0) continue;
             const u32 depth = inst.Flags<u32>();
             if (depth != 8 && depth != 16) throw LogicError("Invalid software HMMA depth");
+            ++tensor_ops;
             if (depth == 16 && ctx.cooperative_hmma) continue;
             needed[depth == 16] = true;
         }
+    }
+    // Narrow A/B experiment for the 370 ms Ocarina compute pass on Odin 3 / Turnip.
+    // Source: Eden NX2 Android's workgroup-memory HMMA strategy (GPL-3.0-or-later),
+    // adapted to this verified shader's launch/memory signature. Other games and
+    // normal launches retain the original subgroup-shuffle implementation.
+    static const bool lds_requested = [] {
+        const char* const value = std::getenv("EDEN_NX2_OOT_HMMA_LDS");
+        return value != nullptr && value[0] == '1';
+    }();
+    const u32 invocations = program.workgroup_size[0] * program.workgroup_size[1] *
+                            program.workgroup_size[2];
+    const u32 staging_slots = invocations + 128U;
+    const u32 staging_offset = (program.shared_memory_size + 15U) & ~15U;
+    const u32 staging_total = staging_offset + staging_slots * 7U * sizeof(u32);
+    const u32 shared_limit = ctx.profile.max_compute_shared_memory_size != 0
+                                 ? std::min(32768U, ctx.profile.max_compute_shared_memory_size)
+                                 : 32768U;
+    const bool lds_target = lds_requested &&
+                            Settings::GetCurrentProgramID() == 0x0400486024DEC000ULL &&
+                            program.stage == Stage::Compute && needed[1] &&
+                            program.workgroup_size[0] == 128U &&
+                            program.workgroup_size[1] == 1U &&
+                            program.workgroup_size[2] == 1U &&
+                            program.shared_memory_size == 5120U && tensor_ops == 192U &&
+                            ctx.SupportsSubgroups() && staging_total <= shared_limit;
+    Id lds_var{}, lds_elem_ptr{}, lds_subgroup_id{}, lds_subgroup_size{};
+    const bool lds_explicit = ctx.uses_explicit_workgroup_layout;
+    if (lds_target) {
+        // Six u32 source words per lane, once per HMMA call, plus one spare row.
+        // Each subgroup owns disjoint slots. Keep after guest shared memory in the
+        // explicit-layout case to avoid aliasing the game's 5 KiB shared block.
+        ctx.AddCapability(spv::Capability::GroupNonUniform);
+        const Id array = ctx.TypeArray(ctx.U32[1], ctx.Const(staging_slots * 7U));
+        lds_elem_ptr = ctx.TypePointer(spv::StorageClass::Workgroup, ctx.U32[1]);
+        if (lds_explicit) {
+            ctx.Decorate(array, spv::Decoration::ArrayStride, 4U);
+            const Id block = ctx.TypeStruct(array);
+            ctx.MemberDecorate(block, 0U, spv::Decoration::Offset, staging_offset);
+            ctx.Decorate(block, spv::Decoration::Block);
+            lds_var = ctx.AddGlobalVariable(
+                ctx.TypePointer(spv::StorageClass::Workgroup, block),
+                spv::StorageClass::Workgroup);
+            ctx.Decorate(lds_var, spv::Decoration::Aliased);
+        } else {
+            lds_var = ctx.AddGlobalVariable(
+                ctx.TypePointer(spv::StorageClass::Workgroup, array),
+                spv::StorageClass::Workgroup);
+        }
+        ctx.interfaces.push_back(lds_var);
+        const Id input_ptr = ctx.TypePointer(spv::StorageClass::Input, ctx.U32[1]);
+        lds_subgroup_id = ctx.AddGlobalVariable(input_ptr, spv::StorageClass::Input);
+        lds_subgroup_size = ctx.AddGlobalVariable(input_ptr, spv::StorageClass::Input);
+        ctx.Decorate(lds_subgroup_id, spv::Decoration::BuiltIn, spv::BuiltIn::SubgroupId);
+        ctx.Decorate(lds_subgroup_size, spv::Decoration::BuiltIn, spv::BuiltIn::SubgroupSize);
+        ctx.interfaces.push_back(lds_subgroup_id);
+        ctx.interfaces.push_back(lds_subgroup_size);
+        LOG_INFO(Shader_SPIRV,
+                 "OOT HMMA LDS enabled: tensor_ops={} threads={} guest_shared={} "
+                 "total_shared={} explicit_layout={}",
+                 tensor_ops, invocations, program.shared_memory_size, staging_total,
+                 lds_explicit);
     }
     for (u32 variant = 0; variant < 2; ++variant) {
         if (!needed[variant]) continue;
@@ -336,6 +402,32 @@ void DefineSoftwareMatrixFunctions(EmitContext& ctx, const IR::Program& program)
         }
         ctx.OpStore(counter, imm(0));
         const Id lane = ctx.OpLoad(u32ty, ctx.subgroup_local_invocation_id);
+        const auto lds_at = [&](Id index) {
+            return lds_explicit
+                       ? ctx.OpAccessChain(lds_elem_ptr, lds_var, imm(0), index)
+                       : ctx.OpAccessChain(lds_elem_ptr, lds_var, index);
+        };
+        const auto lds_barrier = [&] {
+            // Scope=Subgroup, semantics=AcquireRelease | WorkgroupMemory.
+            ctx.OpControlBarrier(imm(3), imm(3), imm(0x108));
+        };
+        Id group_base{};
+        if (lds_target) {
+            group_base = ctx.OpIMul(u32ty, ctx.OpLoad(u32ty, lds_subgroup_id),
+                                   ctx.OpLoad(u32ty, lds_subgroup_size));
+            const Id own = ctx.OpIMul(u32ty, add(group_base, lane), imm(6));
+            for (u32 i = 0; i < 6; ++i) {
+                ctx.OpStore(lds_at(add(own, imm(i))), inputs[i]);
+            }
+            lds_barrier();
+        }
+        const auto fetch = [&](Id value, Id source_lane, Id word) {
+            if (!lds_target) {
+                return ctx.OpGroupNonUniformShuffle(u32ty, imm(3), value, source_lane);
+            }
+            return ctx.OpLoad(u32ty, lds_at(add(
+                ctx.OpIMul(u32ty, add(group_base, source_lane), imm(6)), word)));
+        };
         const Id warp_base = and_(lane, ~31U);
         const Id row_base = and_(lane, 28);
         const Id col_base = ctx.OpShiftLeftLogical(u32ty, and_(lane, 3), imm(3));
@@ -348,12 +440,12 @@ void DefineSoftwareMatrixFunctions(EmitContext& ctx, const IR::Program& program)
                 const Id b = pick(inputs[4], inputs[5]);
                 std::array<Id, 2> bs;
                 for (u32 col = 0; col < 2; ++col)
-                    bs[col] = unpack(ctx.OpGroupNonUniformShuffle(
-                        u32ty, imm(3), b, add(b_base, imm(component + col * 4))));
+                    bs[col] = unpack(fetch(b, add(b_base, imm(component + col * 4)),
+                                           pick(imm(4), imm(5))));
                 for (u32 row = 0; row < 2; ++row) {
-                    const Id as = unpack(ctx.OpGroupNonUniformShuffle(
-                        u32ty, imm(3), pick(inputs[row], inputs[row + 2]),
-                        add(a_base, imm(component))));
+                    const Id as = unpack(fetch(pick(inputs[row], inputs[row + 2]),
+                                               add(a_base, imm(component)),
+                                               pick(imm(row), imm(row + 2))));
                     for (u32 col = 0; col < 2; ++col) {
                         Id value = ctx.OpLoad(f32ty, accumulators[row * 2 + col]);
                         for (u32 half = 0; half < 2; ++half) {
@@ -388,6 +480,11 @@ void DefineSoftwareMatrixFunctions(EmitContext& ctx, const IR::Program& program)
             ctx.OpStore(counter, add(group, imm(1)));
             ctx.OpBranch(header);
             ctx.AddLabel(end);
+        }
+        if (lds_target) {
+            // No lane may overwrite its next call's sources before its peers
+            // have finished all loads from this call's staging words.
+            lds_barrier();
         }
         std::array<Id, 2> packed;
         for (u32 row = 0; row < 2; ++row)
