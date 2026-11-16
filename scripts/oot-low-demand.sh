@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# Experimental Odin 3 / ArmadaOS low-demand Ocarina profile.
+# Run in the same Fedora ARM64 toolbox as Lichii. Does not edit any game files,
+# shared configuration, saved games, graphics drivers, artwork or other installs.
+set -euo pipefail
+
+usage() {
+    cat <<'HELP'
+Usage: oot-low-demand.sh [--profile] [--aggressive] [-- Lichii arguments...]
+
+  (no options)   Start experimental Lichii with reversible OOT-only low-demand mode.
+  --profile      Also record GPU timestamps and capture the exact slow compute SPIR-V.
+  --aggressive   Optional UNSAFE-for-rendering A/B: skip one identified unused network
+                 compute pass only after the No sharpening output bypass succeeds.
+                 May cause visual errors; not proven on Odin.
+
+For a standalone source script, set LICHII_EXPERIMENT_BIN to the path of the
+experimental binary. A script packaged next to the binary detects it itself.
+You must select Ocarina of Time (0400486024DEC000) inside Lichii.
+Use system Mesa Turnip; never runs krfb-virtualmonitor or changes host packages.
+HELP
+}
+
+profile=0
+aggressive=0
+while (( $# )); do
+    case "$1" in
+        --profile) profile=1; shift ;;
+        --aggressive) aggressive=1; shift ;;
+        --help|-h) usage; exit 0 ;;
+        --) shift; break ;;
+        -*) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
+        *) break ;;
+    esac
+done
+
+if [[ "$(uname -m)" != "aarch64" ]]; then
+    echo "STOP: This test is for AArch64/ArmadaOS, not this host." >&2
+    exit 1
+fi
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+binary="${LICHII_EXPERIMENT_BIN:-}"
+if [[ -z "$binary" ]]; then
+    for candidate in "$script_dir/lichii" "$script_dir/../usr/bin/lichii" \
+                     "$script_dir/../bin/lichii"; do
+        if [[ -x "$candidate" && ! -d "$candidate" ]]; then
+            binary="$candidate"
+            break
+        fi
+    done
+fi
+if [[ -z "$binary" || ! -x "$binary" ]]; then
+    echo "STOP: experimental Lichii binary not found; nothing changed." >&2
+    echo "Set LICHII_EXPERIMENT_BIN or run the script inside the extracted test package." >&2
+    exit 1
+fi
+
+icd=/usr/share/vulkan/icd.d/freedreno_icd.aarch64.json
+if [[ ! -f "$icd" ]]; then
+    echo "STOP: Fedora/ArmadaOS system Turnip driver ICD is absent: $icd" >&2
+    exit 1
+fi
+
+# These are runtime process variables; nothing is written to ~/.config or the game.
+export EDEN_NX2_OOT_LOW_DEMAND=1
+export EDEN_NX2_OOT_SKIP_UNUSED_HEAVY="$aggressive"
+export VK_DRIVER_FILES="$icd"
+export QT_QPA_PLATFORM=wayland
+if (( profile )); then
+    export EDEN_NX2_OOT_SLOW_COMPUTE_TRACE=1
+    export EDEN_NX2_GPU_PROFILE=1
+    export EDEN_DKB_FRAME_TRACE=1
+else
+    export EDEN_NX2_OOT_SLOW_COMPUTE_TRACE=0
+    export EDEN_NX2_GPU_PROFILE=0
+    export EDEN_DKB_FRAME_TRACE=0
+fi
+
+echo "=== OOT ARM64 LOW-DEMAND EXPERIMENT ==="
+echo "Binary: $binary"
+echo "Driver: system Mesa Turnip"
+echo "Profile: low-demand (only title 0400486024DEC000)"
+echo "GPU trace: $profile; optional heavy-network bypass: $aggressive"
+echo "Existing settings, save data and other games: unchanged"
+echo "Suggested per-game settings: Handheld mode, Vulkan, 1X scaling, NCE."
+echo "Select Ocarina inside the GUI and close Lichii normally at the end."
+
+set +e
+env -u VK_ICD_FILENAMES -u VK_ADD_DRIVER_FILES \
+    -u EDEN_NX2_NO_MESH -u EDEN_NX2_NO_MESH_FILE \
+    "$binary" "$@"
+status=$?
+set -e
+
+if (( profile )); then
+    log="$HOME/.local/share/lichii/log/eden_log.txt"
+    out="$HOME/Development/turnip-a830-drm/oot-low-demand-profiles/$(date +%Y%m%d-%H%M%S)"
+    mkdir -p "$out"
+    if [[ -f "$log" ]]; then
+        cp -p -- "$log" "$out/eden-oot-low-demand.txt"
+        echo
+        echo "=== GPU PROFILE: SLOW COMPUTE ==="
+        grep -E 'NX2 OOT slow compute|DKB gpu_frame|DKB gpu_work|Async read-back per second|Skipping "Max Resolution|Skipping "Texture Pool' \
+            "$log" | tail -n 20 || true
+        echo "Full log: $out/eden-oot-low-demand.txt"
+        find "$HOME/.local/share/lichii/dump" -maxdepth 3 -type f \
+             -name '*_03bf0ffc7d2d0bed.spv' -print 2>/dev/null || true
+    else
+        echo "No internal Eden log found; profiling capture unavailable."
+    fi
+fi
+exit "$status"
