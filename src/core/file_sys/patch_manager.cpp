@@ -626,7 +626,8 @@ std::vector<std::string> PatchManager::GetDisabledAddons() const {
         return env != nullptr && env[0] == '1';
     }();
     if (oot_low_demand && title_id == 0x0400486024DEC000ULL) {
-        for (const char* name : {MAX_RESOLUTION_NAME, "Texture Pool x2 (built-in)"}) {
+        for (std::string_view name : std::array<std::string_view, 2>{
+                 MAX_RESOLUTION_NAME, "Texture Pool x2 (built-in)"}) {
             if (std::find(disabled.begin(), disabled.end(), name) == disabled.end()) {
                 disabled.emplace_back(name);
             }
