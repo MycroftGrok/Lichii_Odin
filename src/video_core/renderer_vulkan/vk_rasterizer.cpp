@@ -2446,9 +2446,9 @@ void RasterizerVulkan::DispatchCompute() {
             static std::atomic<u32> logged{};
             if (logged.fetch_add(1, std::memory_order_relaxed) < 8) {
                 LOG_INFO(Render_Vulkan,
-                         "NX2 OOT slow compute dispatch hash={:016x} grid={}x{}x{} "
-                         "block={}x{}x{} indirect={} list_slot={}",
-                         pipeline->ShaderHash(), qmd.grid_dim_x.Value(),
+                         "NX2 OOT slow compute dispatch hash={:016x} native_key={:016x} "
+                         "grid={}x{}x{} block={}x{}x{} indirect={} list_slot={}",
+                         pipeline->ShaderHash(), native_key, qmd.grid_dim_x.Value(),
                          qmd.grid_dim_y.Value(), qmd.grid_dim_z.Value(),
                          qmd.block_dim_x.Value(), qmd.block_dim_y.Value(),
                          indirect_address.has_value(), list_slot.has_value());
