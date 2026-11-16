@@ -88,3 +88,41 @@ and `spirv-val`. **Do not** distribute game assets or guest shader binaries.
 
 No code in this profile resets shader caches, deletes game data, changes
 an OS driver, or replaces the user's normal Lichii executable.
+
+## Targeted HMMA workgroup-memory experiment (Nov 16, 2026)
+
+Profiling identified SPIR-V shader `03bf0ffc7d2d0bed` / **native key
+`d8efd9f0c95abd80`** running at ~368-384 ms per invocation on Odin 3
+Turnip in the Deku Tree/Navi conversation. The captured 228,780-byte
+shader has **192 calls** into a software-emulated HMMA routine using
+`OpGroupNonUniformShuffle`; workgroup `128x1x1`, grid `43x24x1`,
+original shared-memory requirement **5120 bytes**. The Android
+Eden NX2 project's workgroup-memory HMMA workaround targets this type
+of slow lane-index shuffle. Its license is GPL-3.0-or-later.
+
+An extra **opt-in** flag `EDEN_NX2_OOT_HMMA_LDS=1` now selects workgroup-memory
+staging for the **specific Ocarina IR signature only** (192 tensor ops,
+128x1x1 local size, 5120 B shared, Switch 2 Ocarina title ID). It stages
+six source words per lane in workgroup memory and uses subgroup-scope
+barriers before/after matrix calculation, replacing expensive dynamic
+subgroup shuffles. It does **not** omit compute work or change its matrix
+arithmetic. Estimated shared-memory budget is 12 KiB (including original
+5 KiB), below a conservative 32 KiB upper bound.
+
+From a separately extracted *HMMA LDS* artifact:
+
+```bash
+bash "/path/to/extracted/lichii/usr/bin/oot-low-demand.sh" --hmma-lds --profile
+```
+
+The existing launcher without `--hmma-lds` runs the same baseline
+translation. A/B with profiling off to measure actual FPS and profiling
+on for GPU timestamp comparisons. Do not modify or clear the stable
+shader cache. Check the logs for `OOT HMMA LDS enabled` to confirm the
+signature matched and workgroup lowering actually ran.
+
+**Status**: Source experiment only; may fail compilation, SPIR-V
+validation or gameplay. Guest subgroup control-flow uniformity has not
+been independently established. If it hangs, renders incorrectly or
+is slower, close the experimental build and relaunch *without* the
+`--hmma-lds` option. Do not assume host GPU driver updates are needed.
