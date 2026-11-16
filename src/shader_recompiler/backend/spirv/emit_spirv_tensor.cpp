@@ -286,13 +286,21 @@ void DefineSoftwareMatrixFunctions(EmitContext& ctx, const IR::Program& program)
     const u32 shared_limit = ctx.profile.max_compute_shared_memory_size != 0
                                  ? std::min(32768U, ctx.profile.max_compute_shared_memory_size)
                                  : 32768U;
+    // Both Ocarina signatures were independently observed in the Odin 3
+    // GPU-timestamp trace. 03bf: 192 HMMA ops, 5 KiB, ~368 -> ~32 ms;
+    // e40f: 176 HMMA ops, 5.5 KiB, ~334 ms before LDS.
+    // The 176-op variant is a separate unverified A/B experiment.
+    const bool original_hmma = tensor_ops == 192U && program.shared_memory_size == 5120U;
+    const bool extra_hmma = tensor_ops == 176U && program.shared_memory_size == 5632U;
     const bool lds_target = lds_requested &&
                             Settings::GetCurrentProgramID() == 0x0400486024DEC000ULL &&
-                            program.stage == Stage::Compute && needed[1] &&
+                            program.stage == Stage::Compute && needed[1] && !needed[0] &&
                             program.workgroup_size[0] == 128U &&
                             program.workgroup_size[1] == 1U &&
                             program.workgroup_size[2] == 1U &&
-                            program.shared_memory_size == 5120U && tensor_ops == 192U &&
+                            (original_hmma || extra_hmma) &&
+                            program.info.storage_buffers_descriptors.size() == 1 &&
+                            !program.info.uses_global_memory &&
                             ctx.SupportsSubgroups() && staging_total <= shared_limit;
     Id lds_var{}, lds_elem_ptr{}, lds_subgroup_id{}, lds_subgroup_size{};
     const bool lds_explicit = ctx.uses_explicit_workgroup_layout;
