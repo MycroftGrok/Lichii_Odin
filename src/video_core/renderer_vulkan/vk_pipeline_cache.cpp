@@ -481,7 +481,8 @@ vk::ShaderModule EmitComputeModule(const Device& device, const Shader::Profile& 
         return value != nullptr && value[0] == '1';
     }()};
     constexpr u64 slow_hash = 0x03bf0ffc7d2d0bedULL;
-    const bool targeted_dump = trace_slow_compute && shader_hash == slow_hash;
+    const bool targeted_dump = trace_slow_compute && shader_hash == slow_hash &&
+                               Settings::GetCurrentProgramID() == 0x0400486024DEC000ULL;
     const bool should_dump = Settings::values.gpu_log_shader_dumps.GetValue() || targeted_dump;
     if (should_log || should_dump) {
         const std::string shader_name = fmt::format("shader_{:016x}_compute", shader_hash);
@@ -3465,6 +3466,7 @@ ComputePipelineCacheEntry PipelineCache::CreateComputePipeline(
 
     auto program{TranslateProgram(pools.inst, pools.block, env, cfg, host_info)};
     if (key.unique_hash == 0x03bf0ffc7d2d0bedULL &&
+        Settings::GetCurrentProgramID() == 0x0400486024DEC000ULL &&
         std::getenv("EDEN_NX2_OOT_SLOW_COMPUTE_TRACE") != nullptr) {
         LOG_INFO(Render_Vulkan,
                  "NX2 OOT slow compute IR hash={:016x} workgroup={}x{}x{} shared_bytes={} "

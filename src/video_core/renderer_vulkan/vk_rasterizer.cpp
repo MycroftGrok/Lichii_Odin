@@ -2436,7 +2436,8 @@ void RasterizerVulkan::DispatchCompute() {
     }
 
     const auto& qmd{kepler_compute->launch_description};
-    if (pipeline->ShaderHash() == 0x03bf0ffc7d2d0bedULL) {
+    if (program_id == 0x0400486024DEC000ULL &&
+        pipeline->ShaderHash() == 0x03bf0ffc7d2d0bedULL) {
         static const bool trace_slow = [] {
             const char* const value = std::getenv("EDEN_NX2_OOT_SLOW_COMPUTE_TRACE");
             return value != nullptr && value[0] == '1';
