@@ -4,6 +4,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <cstring>
 #include <cstdlib>
@@ -104,8 +105,26 @@ vk::Buffer CreateBuffer(const Device& device, const MemoryAllocator& memory_allo
     if (sparse_alignment > 1) {
         return memory_allocator.CreateBuffer(buffer_ci, MemoryUsage::DeviceLocal, sparse_alignment);
     }
+    // Adreno 830 / ArmadaOS experiment. Only enable on explicit request: changing
+    // buffer-cache allocation globally could affect memory pressure and synchronization.
+    // The existing FinishForHostRead()/SubmitForHostRead() methods already record a
+    // device-to-host read barrier before waiting for mapped GPU results.
+    static const bool odin_mapped_requested = [] {
+        const char* const flag = std::getenv("EDEN_NX2_MAPPED_BUFFERS");
+        return flag != nullptr && flag[0] == '1';
+    }();
+    const bool odin_mapped = odin_mapped_requested && device.IsIntegrated() &&
+                            device.GetDriverID() == VK_DRIVER_ID_MESA_TURNIP;
+    if (odin_mapped) {
+        static std::atomic<bool> logged{};
+        if (!logged.exchange(true, std::memory_order_relaxed)) {
+            LOG_INFO(Render_Vulkan,
+                     "Odin A830 mapped buffers enabled: non-sparse GPU buffer cache uses Stream");
+        }
+    }
     return memory_allocator.CreateBuffer(
-        buffer_ci, device.IsMoltenVK() ? MemoryUsage::Stream : MemoryUsage::DeviceLocal);
+        buffer_ci, (device.IsMoltenVK() || odin_mapped) ? MemoryUsage::Stream
+                                                       : MemoryUsage::DeviceLocal);
 }
 } // Anonymous namespace
 
