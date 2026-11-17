@@ -7,8 +7,16 @@
 #include <array>
 #include <numbers>
 #include <optional>
+#include <atomic>
+#include <cstdlib>
+#include <fstream>
+#include <iterator>
+#include <string_view>
+#include <thread>
 #ifdef __linux__
 #include <cerrno>
+#include <fcntl.h>
+#include <poll.h>
 #include <cstring>
 #include <filesystem>
 #include <unistd.h>
@@ -105,6 +113,210 @@ int CountWiredDualSenses() {
 }
 
 constexpr std::chrono::seconds SilentConnectionTimeout{10};
+
+// ODIN_DECK_UHID_BRIDGE_V1: InputPlumber 28DE:12F0 -> process-local SDL3 gamepad.
+// On by default ONLY for verified ArmadaOS deck-uhid; set
+// LICHII_ODIN_DECK_UHID_BRIDGE=0 to opt out.
+#ifdef __linux__
+struct OdinDeckButton {
+    SDL_GamepadButton button;
+    unsigned char byte;
+    unsigned char bit;
+};
+static constexpr OdinDeckButton odin_deck_buttons[] = {
+    {SDL_GAMEPAD_BUTTON_SOUTH, 8, 7}, {SDL_GAMEPAD_BUTTON_EAST, 8, 5},
+    {SDL_GAMEPAD_BUTTON_WEST, 8, 6}, {SDL_GAMEPAD_BUTTON_NORTH, 8, 4},
+    {SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, 8, 3},
+    {SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, 8, 2},
+    {SDL_GAMEPAD_BUTTON_START, 9, 6}, {SDL_GAMEPAD_BUTTON_BACK, 9, 4},
+    {SDL_GAMEPAD_BUTTON_GUIDE, 9, 5},
+    {SDL_GAMEPAD_BUTTON_DPAD_DOWN, 9, 3},
+    {SDL_GAMEPAD_BUTTON_DPAD_LEFT, 9, 2},
+    {SDL_GAMEPAD_BUTTON_DPAD_RIGHT, 9, 1},
+    {SDL_GAMEPAD_BUTTON_DPAD_UP, 9, 0},
+    {SDL_GAMEPAD_BUTTON_LEFT_STICK, 10, 6},
+    {SDL_GAMEPAD_BUTTON_RIGHT_STICK, 11, 2},
+    {SDL_GAMEPAD_BUTTON_LEFT_PADDLE1, 13, 1},
+    {SDL_GAMEPAD_BUTTON_LEFT_PADDLE2, 9, 7},
+    {SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1, 13, 2},
+    {SDL_GAMEPAD_BUTTON_RIGHT_PADDLE2, 10, 0},
+    {SDL_GAMEPAD_BUTTON_MISC1, 14, 2},
+};
+static SDL_JoystickID odin_deck_id{};
+static SDL_Joystick* odin_deck_joystick{};
+static int odin_deck_fd{-1};
+static std::thread odin_deck_reader;
+static std::atomic<bool> odin_deck_stop{false};
+static std::string odin_deck_verified_path;
+
+static bool OdinDeckModeEnabled() {
+    for (const char* config : {"/run/host/etc/armada/controller.conf",
+                               "/etc/armada/controller.conf"}) {
+        std::ifstream f(config);
+        if (!f) continue;
+        std::string line;
+        while (std::getline(f, line)) {
+            if (line == "controller_type=deck-uhid") return true;
+        }
+    }
+    return false;
+}
+
+static std::string FindOdinDeckHid() {
+    std::string found;
+    std::error_code ec;
+    if (!std::filesystem::exists("/sys/class/hidraw", ec)) return {};
+    for (const auto& entry : std::filesystem::directory_iterator("/sys/class/hidraw", ec)) {
+        std::ifstream f(entry.path() / "device/uevent");
+        if (!f) continue;
+        const std::string data((std::istreambuf_iterator<char>(f)),
+                               std::istreambuf_iterator<char>());
+        if (data.find("HID_ID=0003:000028DE:000012F0") == std::string::npos) continue;
+        const auto origin = std::filesystem::canonical(entry.path() / "device", ec);
+        if (ec || origin.string().find("/virtual/") == std::string::npos) continue;
+        const std::string node = "/dev/" + entry.path().filename().string();
+        if (!found.empty()) return {}; // Never guess between duplicate devices.
+        found = node;
+    }
+    return found;
+}
+
+static Sint16 OdinDeckS16(const unsigned char* data) {
+    return static_cast<Sint16>(static_cast<unsigned>(data[0]) |
+                               (static_cast<unsigned>(data[1]) << 8));
+}
+
+static void OdinDeckReadLoop() {
+    std::array<unsigned char, 64> previous{};
+    bool seen = false;
+    while (!odin_deck_stop.load()) {
+        pollfd pfd{odin_deck_fd, POLLIN, 0};
+        const int polled = ::poll(&pfd, 1, 100);
+        if (polled == 0 || (polled < 0 && errno == EINTR)) continue;
+        if (polled < 0 || (pfd.revents & (POLLHUP | POLLERR | POLLNVAL))) break;
+        if (!(pfd.revents & POLLIN)) continue;
+        unsigned char packet[128];
+        const ssize_t len = ::read(odin_deck_fd, packet, sizeof(packet));
+        if (len < 0 && (errno == EAGAIN || errno == EINTR)) continue;
+        if (len <= 0) break;
+        if (len != 64 || packet[0] != 1 || packet[1] != 0 ||
+            packet[2] != 9 || packet[3] != 64) continue;
+        for (const auto& b : odin_deck_buttons) {
+            const unsigned char mask = static_cast<unsigned char>(1u << b.bit);
+            if (!seen || ((previous[b.byte] ^ packet[b.byte]) & mask)) {
+                SDL_SetJoystickVirtualButton(
+                    odin_deck_joystick, static_cast<int>(b.button),
+                    (packet[b.byte] & mask) != 0);
+            }
+        }
+        for (int axis = 0; axis < 4; ++axis) {
+            const int offset = 48 + axis * 2;
+            if (!seen || previous[offset] != packet[offset] ||
+                previous[offset + 1] != packet[offset + 1]) {
+                SDL_SetJoystickVirtualAxis(odin_deck_joystick, axis,
+                                            OdinDeckS16(packet + offset));
+            }
+        }
+        for (int i = 0; i < 2; ++i) {
+            const int offset = 44 + 2 * i;
+            if (!seen || previous[offset] != packet[offset] ||
+                previous[offset + 1] != packet[offset + 1]) {
+                const unsigned v = static_cast<unsigned>(packet[offset]) |
+                                   (static_cast<unsigned>(packet[offset + 1]) << 8);
+                SDL_SetJoystickVirtualAxis(
+                    odin_deck_joystick, 4 + i,
+                    static_cast<Sint16>(std::min(v, 32767u)));
+            }
+        }
+        std::copy_n(packet, 64, previous.begin());
+        seen = true;
+    }
+}
+
+static void StopOdinDeckBridge() {
+    odin_deck_stop.store(true);
+    if (odin_deck_reader.joinable()) odin_deck_reader.join();
+    if (odin_deck_joystick) SDL_CloseJoystick(odin_deck_joystick);
+    odin_deck_joystick = nullptr;
+    if (odin_deck_id) SDL_DetachVirtualJoystick(odin_deck_id);
+    odin_deck_id = 0;
+    if (odin_deck_fd >= 0) ::close(odin_deck_fd);
+    odin_deck_fd = -1;
+    odin_deck_verified_path.clear();
+}
+
+static void StartOdinDeckBridge() {
+    const char* request = std::getenv("LICHII_ODIN_DECK_UHID_BRIDGE");
+    // Default on for verified ArmadaOS deck-uhid; explicit override wins.
+    if (request && std::string_view(request) != "1") return;
+    if (!OdinDeckModeEnabled()) return;
+    const std::string path = FindOdinDeckHid();
+    if (path.empty()) {
+        LOG_WARNING(Input, "Odin deck-uhid bridge: no unique verified 28DE:12F0 virtual HID");
+        return;
+    }
+    odin_deck_fd = ::open(path.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    if (odin_deck_fd < 0) {
+        LOG_WARNING(Input, "Odin deck-uhid bridge: cannot read {}", path);
+        return;
+    }
+    SDL_VirtualJoystickDesc desc{};
+    SDL_INIT_INTERFACE(&desc);
+    desc.type = SDL_JOYSTICK_TYPE_GAMEPAD;
+    desc.vendor_id = 0x28de;
+    desc.product_id = 0x12f0;
+    desc.name = "AYN Odin3 Gamepad deck-uhid bridge";
+    desc.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
+    desc.naxes = SDL_GAMEPAD_AXIS_COUNT;
+    desc.button_mask = (1u << SDL_GAMEPAD_BUTTON_COUNT) - 1u;
+    desc.axis_mask = (1u << SDL_GAMEPAD_AXIS_COUNT) - 1u;
+    odin_deck_id = SDL_AttachVirtualJoystick(&desc);
+    if (!odin_deck_id) {
+        LOG_WARNING(Input, "Odin deck-uhid bridge: SDL attach failed: {}", SDL_GetError());
+        StopOdinDeckBridge();
+        return;
+    }
+    const SDL_GUID guid = SDL_GetJoystickGUIDForID(odin_deck_id);
+    char guid_text[64]{};
+    SDL_GUIDToString(guid, guid_text, sizeof(guid_text));
+    const std::string mapping = fmt::format(
+        "{},AYN Odin3 Gamepad deck-uhid bridge,"
+        "a:b0,b:b1,x:b2,y:b3,back:b4,guide:b5,start:b6,"
+        "leftstick:b7,rightstick:b8,leftshoulder:b9,rightshoulder:b10,"
+        "dpup:b11,dpdown:b12,dpleft:b13,dpright:b14,misc1:b15,"
+        "paddle1:b16,paddle2:b17,paddle3:b18,paddle4:b19,"
+        "leftx:a0,lefty:a1,rightx:a2,righty:a3,lefttrigger:a4,righttrigger:a5",
+        guid_text);
+    if (!SDL_SetGamepadMapping(odin_deck_id, mapping.c_str())) {
+        LOG_WARNING(Input, "Odin deck-uhid bridge: SDL mapping failed: {}", SDL_GetError());
+        StopOdinDeckBridge();
+        return;
+    }
+    odin_deck_joystick = SDL_OpenJoystick(odin_deck_id);
+    if (!odin_deck_joystick || !SDL_IsGamepad(odin_deck_id)) {
+        LOG_WARNING(Input, "Odin deck-uhid bridge: SDL virtual pad unavailable");
+        StopOdinDeckBridge();
+        return;
+    }
+    odin_deck_verified_path = path;
+    odin_deck_stop.store(false);
+    try {
+        odin_deck_reader = std::thread(OdinDeckReadLoop);
+    } catch (...) {
+        LOG_WARNING(Input, "Odin deck-uhid bridge: failed to start reader");
+        StopOdinDeckBridge();
+        return;
+    }
+    LOG_INFO(Input, "Odin deck-uhid bridge active: {} => SDL virtual gamepad {}", path,
+             odin_deck_id);
+}
+
+static bool IsOdinDeckBridgeJoystick(SDL_Joystick* joy) {
+    return joy && odin_deck_id && SDL_GetJoystickID(joy) == odin_deck_id &&
+           SDL_IsJoystickVirtual(odin_deck_id) && !odin_deck_verified_path.empty();
+}
+#endif
+
 
 /// The warning for a controller that sent no input since it connected, when the raw HID device
 /// behind its evdev node (the path SDL_GetJoystickPath returns) can't be opened. Empty otherwise.
@@ -1026,6 +1238,9 @@ SDLDriver::SDLDriver(std::string input_engine_) : InputEngine(std::move(input_en
         return;
     }
 
+#ifdef __linux__
+    StartOdinDeckBridge();
+#endif
     SDL_AddEventWatch(&SDLEventWatcher, this);
 
     initialized = true;
@@ -1042,8 +1257,11 @@ SDLDriver::SDLDriver(std::string input_engine_) : InputEngine(std::move(input_en
 }
 
 SDLDriver::~SDLDriver() {
-    CloseJoysticks();
     SDL_RemoveEventWatch(&SDLEventWatcher, this);
+#ifdef __linux__
+    StopOdinDeckBridge();
+#endif
+    CloseJoysticks();
 
     initialized = false;
     if (start_thread) {
@@ -1065,12 +1283,19 @@ std::vector<Common::ParamPackage> SDLDriver::GetInputDevices() const {
             // Xbox/Deck display labels alone cannot identify InputPlumber sources.
             SDL_Joystick* raw = joystick->GetSDLJoystick();
             const char* raw_path = raw ? SDL_GetJoystickPath(raw) : nullptr;
+#ifdef __linux__
+            const std::string verified_path = IsOdinDeckBridgeJoystick(raw)
+                                                  ? odin_deck_verified_path : std::string{};
+#else
+            const std::string verified_path{};
+#endif
             devices.emplace_back(Common::ParamPackage{
                 {"engine", GetEngineName()},
                 {"display", std::move(name)},
                 {"guid", joystick->GetGUID().RawString()},
                 {"port", std::to_string(joystick->GetPort())},
-                {"path", raw_path ? std::string(raw_path) : std::string()},
+                {"path", !verified_path.empty() ? verified_path
+                         : (raw_path ? std::string(raw_path) : std::string())},
                 {"vendor", std::to_string(raw ? SDL_GetJoystickVendor(raw) : 0)},
                 {"product", std::to_string(raw ? SDL_GetJoystickProduct(raw) : 0)},
                 {"instance_id", std::to_string(raw ? SDL_GetJoystickID(raw) : 0)},
