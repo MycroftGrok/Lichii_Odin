@@ -6,6 +6,10 @@
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
+#ifdef __linux__
+#include <fstream>
+#include <string>
+#endif
 #include <system_error>
 
 #include "common/fs/fs_paths.h"
@@ -116,7 +120,32 @@ static void SetUpNvidiaShaderDiskCache() {
 }
 #endif
 
+#ifdef __linux__
+// ArmadaOS deck-uhid appears as a virtual Valve HID device. SDL's udev-driven
+// hotplug enumeration missed USB Steam Controllers inside toolbox on the Odin 3.
+// Poll HIDAPI instead, only for this configured mode; respect user overrides.
+// This must run before SDL initialization, not when the SDL driver is constructed.
+static void ConfigureArmadaDeckUhidHotplug() {
+    if (std::getenv("SDL_HIDAPI_UDEV") != nullptr) return;
+    for (const char* config : {"/run/host/etc/armada/controller.conf",
+                               "/etc/armada/controller.conf"}) {
+        std::ifstream f(config);
+        if (!f) continue;
+        std::string line;
+        while (std::getline(f, line)) {
+            if (line == "controller_type=deck-uhid") {
+                ::setenv("SDL_HIDAPI_UDEV", "0", 0);
+                return;
+            }
+        }
+    }
+}
+#endif
+
 int main(int argc, char* argv[]) {
+#ifdef __linux__
+    ConfigureArmadaDeckUhidHotplug();
+#endif
 #if defined(__unix__) && !defined(__APPLE__) && !defined(__ANDROID__)
     SetUpNvidiaShaderDiskCache();
 #endif
